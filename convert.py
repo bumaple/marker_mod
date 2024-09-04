@@ -168,13 +168,11 @@ def main():
     pdf_data_opt = PDFDataOperator(config_file)
 
     if args.run_type == 'convert':
-        records = pdf_data_opt.query_need_ocr(OCR_TYPE, args.max)
-
-
         metadata = {}
         files = []
         out_folder = ''
         if data_type == 'db':
+            records = pdf_data_opt.query_need_ocr(OCR_TYPE, args.max)
             if len(records) <= 0:
                 log_info = f"Error No data needs to be processed!"
                 print(log_info)
@@ -250,7 +248,7 @@ def main():
                 model.share_memory()
 
         files_number = len(files_to_convert)
-        log_info = f" * * * * * {args.run_type}ing {files_number} pdfs in chunk {args.chunk_idx + 1}/{args.num_chunks} with {total_processes} processes. Started at {start_time.strftime('%Y-%m-%d %H:%M:%S')}"
+        log_info = f" * * * * * {args.run_type.capitalize()}ing {files_number} pdfs in chunk {args.chunk_idx + 1}/{args.num_chunks} with {total_processes} processes. Started at {start_time.strftime('%Y-%m-%d %H:%M:%S')}"
         print(log_info)
         logger.info(log_info)
         task_args = [(files_number, idx, f, out_folder, metadata.get(f), args.min_length, config_file) for idx, f in enumerate(files_to_convert)]
@@ -274,7 +272,7 @@ def main():
 
         average_time = round(execution_seconds / len(files_to_convert))
 
-        log_info = f" * * * * * {args.run_type}ed {files_number} pdfs. Ended at {end_time.strftime('%Y-%m-%d %H:%M:%S')}. Total execution time {int(hours)}hour {int(minutes)}min {int(seconds)}sec, average time {average_time}src/record"
+        log_info = f" * * * * * {args.run_type.capitalize()}ed {files_number} pdfs. Ended at {end_time.strftime('%Y-%m-%d %H:%M:%S')}. Total execution time {int(hours)}hour {int(minutes)}min {int(seconds)}sec, average time {average_time}src/record"
         print(log_info)
         logger.info(log_info)
     else:
@@ -293,7 +291,7 @@ def main():
             else:
                 error_files.append(md_file)
 
-        log_info = f" * * * * * {args.run_type}ed {len(records)} pdfs. {len(error_files)} files not exist!"
+        log_info = f" * * * * * {args.run_type.capitalize()}ed {len(records)} pdfs. {len(error_files)} files not exist!"
         print(log_info)
         logger.info(log_info)
         if len(error_files) > 0:

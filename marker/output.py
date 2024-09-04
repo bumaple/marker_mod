@@ -8,13 +8,16 @@ from datetime import datetime
 # 增加 2024-08-13 end
 
 
-def get_subfolder_path(out_folder, fname):
+def get_subfolder_path(out_folder, fname, is_timestamp_path: bool = True):
     subfolder_name = fname.rsplit('.', 1)[0]
     subfolder_path = os.path.join(out_folder, subfolder_name)
 
     # 增加 2024-08-13 begin
-    timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S')
-    subfolder_path_new = os.path.join(subfolder_path, timestamp_str)
+    if is_timestamp_path:
+        timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S')
+        subfolder_path_new = os.path.join(subfolder_path, timestamp_str)
+    else:
+        subfolder_path_new = subfolder_path
     # 增加 2024-08-13 end
 
     return subfolder_path_new

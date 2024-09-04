@@ -1,6 +1,6 @@
 import os
 import argparse
-import traceback
+# import traceback
 import json
 
 from datetime import datetime
@@ -27,6 +27,38 @@ def chunk_markdown_with_langchain(text, chunk_size):
     else:
         chunks = [text]
     return chunks
+
+def request_openai_api(model_url, api_key, model_name, llm_temperature, llm_top_p, llm_max_tokens, chunk_content):
+    openai.api_key = api_key
+    openai.base_url = model_url
+
+    prompt_head = "你是Markdown文件的处理专家，纠正以下Markdown文本的错误，确保内容与前文连贯。请遵循以下要求：\n" + \
+                  "1.修正OCR引起的文字错误和其他错误；\n" + \
+                  "2.使用上下文和常识来纠正错误；\n" + \
+                  "3.只修正错误,不要修改无错误的内容；\n" + \
+                  "4.不要添加额外的句号或其他不必要的标点符号，删除前后无关联且无意义的符号，不增加Markdown代码及语法高亮标记；\n" + \
+                  "5.保持原始结构及所有标题和副标题的完整性，标题补充必要的Markdown标记；\n" + \
+                  "6.保留所有Markdown标记，保留所有原始格式，包括换行符；\n" + \
+                  "7.保留所有中文、数字、字母组成的编号和序号，编号及后续的标题结束后进行换行；\n" + \
+                  "8.保留原文中的所有重要信息，不添加原文中不存在的任何新信息；\n" + \
+                  "9.删除句子或段落中的不必要换行，保持段落的断行，删除句子中不必要的空格；\n" + \
+                  "10.确保内容与前文顺畅衔接，适当处理在句子中间开始或结束的文本使其通顺；\n" + \
+                  "11.只回复经过修正的文本，不添加任何引言、解释或元数据。\n" + \
+                  "下面是需要纠正的内容：\n########\n"
+
+    req_content = prompt_head + chunk_content
+
+    # create a chat completion
+    completion = openai.chat.completions.create(
+        model=model_name,
+        messages=[{"role": "user", "content": f"{req_content}"}],
+        temperature=llm_temperature,
+        top_p=llm_top_p,
+        max_tokens=llm_max_tokens
+    )
+
+    return completion.choices[0].message.content
+
 
 def fix_single_file(filepath: str, config_file: str, chunk_size: int) -> Tuple[str, Dict]:
     config = Config(config_file)
@@ -68,50 +100,23 @@ def fix_single_file(filepath: str, config_file: str, chunk_size: int) -> Tuple[s
         "txt_length": len(file_content)
     }
 
-    prompt_head = "你是Markdown文件的处理专家，纠正以下Markdown文本的错误，保内容与前文连贯。请遵循以下要求：\n" + \
-                  "1.修正OCR引起的文字错误和其他错误；\n" + \
-                  "2.使用上下文和常识来纠正错误；\n" + \
-                  "3.只修正错误,不要修改无错误的内容；\n" + \
-                  "4.不要添加额外的句号或其他不必要的标点符号，删除前后无关联且无意义的符号，不增加Markdown代码及语法高亮标记；\n" + \
-                  "5.保持原始结构及所有标题和副标题的完整性，标题补充必要的Markdown标记；\n" + \
-                  "6.保留所有Markdown标记，保留所有原始格式，包括换行符；\n" + \
-                  "7.保留所有中文、数字、字母组成的编号和序号，编号及后续的标题结束后进行换行；\n" + \
-                  "8.保留原文中的所有重要信息，不添加原文中不存在的任何新信息；\n" + \
-                  "9.删除句子或段落中的不必要换行，保持段落的断行，删除句子中不必要的空格；\n" + \
-                  "10.确保内容与前文顺畅衔接，适当处理在句子中间开始或结束的文本使其通顺；\n" + \
-                  "11.只回复经过修正的文本，不添加任何引言、解释或元数据。\n" + \
-                  "下面是需要纠正的内容：\n########\n"
-
     try:
         resp_contents = []
-
-        openai.api_key = api_key
-        openai.base_url = model_url
 
         chunks = chunk_markdown_with_langchain(file_content, chunk_size)
 
         for idx, chunk in enumerate(chunks):
-            req_content = prompt_head + chunk
-
             start_time = datetime.now()
 
-            # create a chat completion
-            completion = openai.chat.completions.create(
-                model = model_name,
-                messages = [{"role": "user", "content": f"{req_content}"}],
-                temperature = llm_temperature,
-                top_p = llm_top_p,
-                max_tokens = llm_max_tokens
-            )
-
-            resp_contents.append(completion.choices[0].message.content)
+            resp_content = request_openai_api(model_url, api_key, model_name, llm_temperature, llm_top_p, llm_max_tokens, chunk)
+            resp_contents.append(resp_content)
 
             end_time = datetime.now()
             # 计算实际执行的时间
             execution_time = end_time - start_time
             execution_seconds = execution_time.total_seconds()
 
-            log_info = f"   LLM request: {idx + 1}/{len(chunks)}, execution time {int(execution_seconds)}sec {filepath}"
+            log_info = f"   {start_time.strftime('%Y-%m-%d %H:%M:%S')} LLM request: {idx + 1}/{len(chunks)}, execution time {int(execution_seconds)}sec {filepath}"
             print(log_info)
             logger.info(log_info)
         out_meta["chunk_num"] = len(chunks)
@@ -219,12 +224,11 @@ def main():
     pdf_data_opt = PDFDataOperator(config_file)
 
     if args.run_type == 'convert':
-        records = pdf_data_opt.query_need_fix(OCR_TYPES, args.max)
-
         metadata = {}
         files = []
         out_folder = None
         if data_type == 'db':
+            records = pdf_data_opt.query_need_fix(OCR_TYPES, args.max)
             if len(records) <= 0:
                 log_info = f"Error No data needs to be processed!"
                 print(log_info)
@@ -317,7 +321,7 @@ def main():
             else:
                 error_files.append(md_file)
 
-        log_info = f" * * * * * {args.run_type}ed {len(records)} pdfs. {len(error_files)} files not exist!"
+        log_info = f" * * * * * {args.run_type.capitalize()}ed {len(records)} pdfs. {len(error_files)} files not exist!"
         print(log_info)
         logger.info(log_info)
         if len(error_files) > 0:
