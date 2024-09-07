@@ -318,12 +318,14 @@ def process_single_file(files_number, idx, filepath, out_folder, metadata, confi
             if 'title' in metadata:
                 title = metadata['title']
 
-            md_path = save_markdown_fix(out_folder, fname, full_text, out_metadata, ocr_type)
+            # 修改OCT_TYPE标志最后一个字符为1，表示完成修正
+            modified_ocr_type = ocr_type[:-1] + '1'
+
+            md_path = save_markdown_fix(out_folder, fname, full_text, out_metadata, modified_ocr_type)
             md_filename = fname.rsplit(".", 1)[0] + ".md"
-            if record_id is not None and parent_record_id is not None and ocr_type is not None:
+            if record_id is not None and parent_record_id is not None:
                 pdf_data_opt = PDFDataOperator(config_file)
-                # 修改OCT_TYPE标志最后一个字符为1，表示完成修正
-                modified_ocr_type = ocr_type[:-1] + '1'
+
                 # pdf_data_opt.update_sub_finish_fix(record_id, modified_string, md_path, md_filename)
                 record_num = pdf_data_opt.get_sub_record_number(parent_record_id)
                 sub_record_id = parent_record_id + '_' + str(int(record_num) + 1).zfill(3)
