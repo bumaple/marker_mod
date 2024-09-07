@@ -7,6 +7,7 @@ class Config:
     NODE_LLM = 'llm'
     NODE_VLM = 'vlm'
     NODE_SYS = 'system'
+    NODE_SERVER = 'server'
 
     def __init__(self, config_file):
         self.config = configparser.ConfigParser()
@@ -34,6 +35,9 @@ class Config:
 
     def get_sys_param(self, param_name):
         return self.get_config_node_param(self.NODE_SYS, param_name)
+
+    def get_server_param(self, param_name):
+        return self.get_config_node_param(self.NODE_SERVER, param_name)
 
     def is_dev_mode(self):
         dev = self.get_sys_param('dev')

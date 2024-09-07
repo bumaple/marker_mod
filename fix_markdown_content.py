@@ -119,7 +119,7 @@ def request_openai_api(model_url, api_key, model_name, llm_temperature: float, l
     openai.api_key = api_key
     openai.base_url = model_url
 
-    prompt_head = "你是Markdown格式的专家，任务是将文本并转化为符合要求的Markdown格式并按照要求输出为Markdown代码。请遵循以下要求：\n" + \
+    prompt_head = "你是Markdown格式的专家，任务是将文本并处理为符合要求的Markdown格式并按照要求输出为Markdown格式文本。请遵循以下要求：\n" + \
                   "1.不添加原文中不存在的任何新信息；\n" + \
                   "2.不要添加不必要的标点符号，删除前后无关联且无意义的符号，删除```、```markdown、``````markdown等标识代码块的标记；\n" + \
                   "3.根据常识把不完整的标题进行补充，比如  # 言、#前、# 前修改为##前言，#附、# 录修改为##附录，中人民共国家标准、中人共国家准等修改为中华人民共和国国家标准；\n" + \
@@ -138,13 +138,14 @@ def request_openai_api(model_url, api_key, model_name, llm_temperature: float, l
                     "类似A.1.1.1.1、A.2.1.2.3、B.1.3.2.5、B.2.2.4.4、C.1.2.3.2、C.2.4.1.3等由英文字母和四组数值和四个.组成的编号的标注为######六级标题；" + \
                   "6.保持原始结构的完整性，标题及所包含的编号需要保持单独一行；\n" + \
                   "7.删除页面下方的页码，删除句子或段落中的不必要换行，删除文本中不必要的空格；\n" + \
-                  "8.识别出来的公式使用完整正确的LaTex公式语法进行标记；\n" + \
-                  "9.只回复符合格式要求的文本，不添加任何引言、解释或元数据。\n"
+                  "8.文本中的数学、化学公式等LaTex公式修改为完整正确的Markdown公式，公式和其他文本在一行用$公式内容$进行标记，公式单独为一行用$$公式内容$$进行标记；\n" + \
+                  "9.文本中的Markdown格式表格替换为Markdown格式中使用的html表格形式；\n" + \
+                  "10.只回复符合格式要求的文本，不添加任何引言、解释或元数据。\n"
 
     params = {
         "model": model_name,
         "messages": [{"role": "system", "content": f"{prompt_head}"},
-                     {"role": "user", "content": f"以下是需要转化的文本：\n{chunk_content}"}],
+                     {"role": "user", "content": f"以下是需要处理的文本：\n{chunk_content}"}],
         "max_tokens": llm_max_tokens
     }
     if llm_temperature not in [None, 0]:

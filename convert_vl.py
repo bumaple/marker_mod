@@ -29,10 +29,9 @@ logger = setup_logger()
 
 
 def replace_string(replace_str: str, str_list: list):
-    new_str = ''
     for str_val in str_list:
-        new_str = replace_str.replace(str_val, '')
-    return new_str
+        replace_str = replace_str.replace(str_val, '')
+    return replace_str
 
 def get_image_filename(image_idx):
     return f"image_{str(image_idx + 1).zfill(2)}.png"
