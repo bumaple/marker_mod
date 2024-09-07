@@ -1,7 +1,7 @@
 import argparse
 
 import openai
-from flask import Flask, request, jsonify
+from flask import Flask, request, json
 
 from marker.logger import setup_logger
 from marker.config_read import Config
@@ -79,7 +79,14 @@ def fix_latex_markdown():
     req_data = request.get_json()
 
     if not req_data or 'text' not in req_data:
-        return jsonify({"is_success": False, "resp_content": "'text' parameter is required"}), 400
+        response = {
+            "is_success": False,
+            "resp_content": "'text' parameter is required"
+        }
+        return app.response_class(
+            response=json.dumps(response, ensure_ascii=False),
+            mimetype='application/json',
+        )
 
     text_value = req_data['text']
     if 'type' in req_data:
@@ -104,7 +111,10 @@ def fix_latex_markdown():
         "is_success": True,
         "resp_content": resp_content
     }
-    return jsonify(response), 200
+    return app.response_class(
+        response=json.dumps(response, ensure_ascii=False),
+        mimetype='application/json'
+    )
 
 
 @app.route('/fix_table', methods=['POST'])
@@ -112,9 +122,17 @@ def fix_table_markdown():
     req_data = request.get_json()
 
     if not req_data or 'text' not in req_data:
-        return jsonify({"is_success": False, "resp_content": "'text' parameter is required"}), 400
+        response = {
+            "is_success": False,
+            "resp_content": "'text' parameter is required"
+        }
+        return app.response_class(
+            response=json.dumps(response, ensure_ascii=False),
+            mimetype='application/json',
+        )
 
-    text_value = req_data['text']
+    text_content = req_data['text']
+
     if 'type' in req_data:
         latex_type = req_data['type']
         if latex_type not in ['alone', 'together']:
@@ -122,14 +140,23 @@ def fix_table_markdown():
     else:
         latex_type = 'alone'
 
+    require_content = None
+    if 'require' in req_data:
+        require_content = req_data['require']
+
     prompt_head = "你是Markdown格式的专家，任务是将文本并处理为符合要求的Markdown格式并按照要求输出为Markdown文本。请遵循以下要求：\n" + \
                   "1.不添加原文中不存在的任何新信息；\n" + \
                   "2.不添加```、```markdown、``````markdown等标识代码块的标记；\n" + \
                   f"3.文本中的数学、化学公式等LaTex公式修改为完整正确的Markdown公式，{'用$内容$进行标记' if latex_type == 'together' else '用$$内容$$进行标记'}；\n" + \
-                  "4.文本中的Markdown格式表格替换为Markdown格式中使用的html表格形式；\n" + \
+                  "4.文本中的Markdown格式表格替换为html形式，如需要处理的文本不包含<table></table>则不要添加<table></table>标记，如需要处理的文本不包含<tr></tr>则不要添加<tr></tr>标记；\n" + \
                   "5.只回复符合格式要求的文本，不添加任何引言、解释或元数据。\n"
 
-    resp_content = request_openai_api(prompt_head=prompt_head, text_content=text_value)
+    if require_content is not None:
+        req_content = f"在已有要求的基础上结合下面的要求对文本进行处理：{require_content}\n以下是需要处理的文本：\n{text_content}"
+    else:
+        req_content = text_content
+
+    resp_content = request_openai_api(prompt_head=prompt_head, text_content=req_content)
 
     replace_strs = ['``` ```markdown', '``````markdown', '```markdown', '```', '\n']
     resp_content = replace_string(resp_content, replace_strs)
@@ -138,7 +165,10 @@ def fix_table_markdown():
         "is_success": True,
         "resp_content": resp_content
     }
-    return jsonify(response), 200
+    return app.response_class(
+            response=json.dumps(response, ensure_ascii=False),
+            mimetype='application/json'
+        )
 
 
 if __name__ == '__main__':
