@@ -171,3 +171,4 @@ cython_debug/
 .idea/
 /logs/
 config.ini
+/models/

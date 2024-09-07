@@ -1,26 +1,28 @@
 import os
 import argparse
-# import traceback
+import traceback
 import json
 
 from datetime import datetime
 from typing import Dict, Tuple
+
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from marker.database.pdf_data_operator import PDFDataOperator
 from marker.logger import setup_logger
 from marker.output import save_markdown_fix
 from marker.config_read import Config
 
+import transformers
 from langchain.text_splitter import MarkdownTextSplitter
 
 import openai
 
+os.environ["TOKENIZERS_PARALLELISM"] = "false" # Disabling parallelism to avoid deadlocks
+
 logger = setup_logger()
 
-OCR_TYPES = ['10', '20']
-FIX_OCR_TYPES = ['11', '21']
-
-def chunk_markdown_with_langchain(text, chunk_size):
+def chunk_markdown_with_langchain(text, chunk_size: int):
     if len(text) > chunk_size:
         splitter = MarkdownTextSplitter(chunk_size=chunk_size)  # 定义分块大小
         chunks = splitter.split_text(text)  # 对文本进行分块
@@ -28,39 +30,109 @@ def chunk_markdown_with_langchain(text, chunk_size):
         chunks = [text]
     return chunks
 
-def request_openai_api(model_url, api_key, model_name, llm_temperature, llm_top_p, llm_max_tokens, chunk_content):
+def chunk_token_with_langchain(text, chunk_size: int, tokens_model):
+    if tokens_model is None or tokens_model == '':
+        return chunk_recursive_with_langchain(text, chunk_size, tokens_model)
+    else:
+        tokenizer = transformers.AutoTokenizer.from_pretrained(
+            tokens_model, trust_remote_code=True
+        )
+        text_splitter = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(tokenizer, chunk_size=chunk_size,
+            chunk_overlap = 0,)
+        # text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+        #     model_name=tokens_model,
+        #     chunk_size=chunk_size,
+        #     chunk_overlap = 0,
+        # )
+
+        tokens_size = get_model_tokenizer_size(tokens_model, text)
+        if tokens_size > chunk_size:
+            chunks = text_splitter.split_text(text)  # 对文本进行分块
+        else:
+            chunks = [text]
+        return chunks
+
+def chunk_recursive_with_langchain(text, chunk_size: int, tokens_model):
+    text_splitter = RecursiveCharacterTextSplitter(
+        separators=[
+            "\n\n",
+            "\n",
+            " ",
+            ".",
+            ",",
+            "\u200B",  # Zero-width space
+            "\uff0c",  # Fullwidth comma
+            "\u3001",  # Ideographic comma
+            "\uff0e",  # Fullwidth full stop
+            "\u3002",  # Ideographic full stop
+            "",
+        ],
+        chunk_size=chunk_size,
+        chunk_overlap=0
+    )
+
+    tokens_size = get_model_tokenizer_size(tokens_model, text)
+    if tokens_size > chunk_size:
+        chunks = text_splitter.split_text(text)  # 对文本进行分块
+    else:
+        chunks = [text]
+    return chunks
+
+
+def get_model_tokenizer_size(tokens_model, text):
+    tokenizer = transformers.AutoTokenizer.from_pretrained(
+        tokens_model, trust_remote_code=True
+    )
+    result = tokenizer.encode(text)
+    return len(result)
+
+
+def request_openai_api(model_url, api_key, model_name, llm_temperature: float, llm_top_p: float, llm_max_tokens: int, chunk_content):
     openai.api_key = api_key
     openai.base_url = model_url
 
-    prompt_head = "你是Markdown文件的处理专家，纠正以下Markdown文本的错误，确保内容与前文连贯。请遵循以下要求：\n" + \
-                  "1.修正OCR引起的文字错误和其他错误；\n" + \
-                  "2.使用上下文和常识来纠正错误；\n" + \
-                  "3.只修正错误,不要修改无错误的内容；\n" + \
-                  "4.不要添加额外的句号或其他不必要的标点符号，删除前后无关联且无意义的符号，不增加Markdown代码及语法高亮标记；\n" + \
-                  "5.保持原始结构及所有标题和副标题的完整性，标题补充必要的Markdown标记；\n" + \
-                  "6.保留所有Markdown标记，保留所有原始格式，包括换行符；\n" + \
-                  "7.保留所有中文、数字、字母组成的编号和序号，编号及后续的标题结束后进行换行；\n" + \
-                  "8.保留原文中的所有重要信息，不添加原文中不存在的任何新信息；\n" + \
-                  "9.删除句子或段落中的不必要换行，保持段落的断行，删除句子中不必要的空格；\n" + \
-                  "10.确保内容与前文顺畅衔接，适当处理在句子中间开始或结束的文本使其通顺；\n" + \
-                  "11.只回复经过修正的文本，不添加任何引言、解释或元数据。\n" + \
-                  "下面是需要纠正的内容：\n########\n"
+    prompt_head = "你是Markdown格式的专家，任务是将文本并转化为符合要求的Markdown格式并按照要求输出为Markdown代码。请遵循以下要求：\n" + \
+                  "1.不添加原文中不存在的任何新信息；\n" + \
+                  "2.不要添加不必要的标点符号，删除前后无关联且无意义的符号，删除```、```markdown、``````markdown等标识代码块的标记；\n" + \
+                  "3.根据常识把不完整的标题进行补充，比如  # 言、#前、# 前修改为##前言，#附、# 录修改为##附录，中人民共国家标准、中人共国家准等修改为中华人民共和国国家标准；\n" + \
+                  "4.保留所有中文、数字、字母组成的编号和序号，保留发布日期、实施日期等所有日期及前后对应的文字，日期不要标注为标题，保留发布机构或者发布单位；\n" + \
+                  "5.取消原文的所有Markdown标题标注，按照下面的要求标注标题级别：\n" + \
+                    "标准名称和标准编号标注为#一级标题，" + \
+                    "前言、附录A、附录B、附录C、附录D等文字加字母的标题标注为##二级标题，" + \
+                    "类似1、2、3、4、5、6、7、8、9、10、11、12、13等由单组数值组成的编号标注为##二级标题，" + \
+                    "类似1.1、1.2、1.3、1.4、2.1、2.2、2.3、2.4、3.1、3.2、3.3、3.4等由两组数值和.组成的编号标注为###三级标题，" + \
+                    "类似A.1、A.2、B.1、B.2、C.1、C.2等由英文字母和一组数值和一个.组成的编号的标注为###三级标题，" + \
+                    "类似1.1.1、1.1.2、1.2.1、1.2.3、2.1.2、2.1.3、2.2.1、2.2.3等由三组数值和两个.组成的编号标注为####四级标题，" + \
+                    "类似A.1.1、A.2.1、B.1.3、B.2.2、C.1.2、C.2.4等由英文字母和两组数值和两个.组成的编号的标注为####四级标题，" + \
+                    "类似1.1.1.1、1.2.1.2、2.2.1.1、2.2.1.2等由四组数字和三个.组成的编号标注为#####五级标题，" + \
+                    "类似A.1.1.1、A.2.1.2、B.1.3.2、B.2.2.4、C.1.2.3、C.2.4.1等由英文字母和三组数值和三个.组成的编号的标注为#####五级标题，" + \
+                    "类似1.1.1.1.1、1.2.1.1.2、2.2.1.1.3、2.2.1.2.5等由五组数字和四个.组成的编号标注为######六级标题，" + \
+                    "类似A.1.1.1.1、A.2.1.2.3、B.1.3.2.5、B.2.2.4.4、C.1.2.3.2、C.2.4.1.3等由英文字母和四组数值和四个.组成的编号的标注为######六级标题；" + \
+                  "6.保持原始结构的完整性，标题及所包含的编号需要保持单独一行；\n" + \
+                  "7.删除页面下方的页码，删除句子或段落中的不必要换行，删除文本中不必要的空格；\n" + \
+                  "8.识别出来的公式使用完整正确的LaTex公式语法进行标记；\n" + \
+                  "9.只回复符合格式要求的文本，不添加任何引言、解释或元数据。\n"
 
-    req_content = prompt_head + chunk_content
+    params = {
+        "model": model_name,
+        "messages": [{"role": "system", "content": f"{prompt_head}"},
+                     {"role": "user", "content": f"以下是需要转化的文本：\n{chunk_content}"}],
+        "max_tokens": llm_max_tokens
+    }
+    if llm_temperature not in [None, 0]:
+        params["temperature"] = llm_temperature
+    if llm_top_p not in [None, 0]:
+        params["top_p"] = llm_top_p
+    if llm_max_tokens not in [None, 0]:
+        params["max_tokens"] = llm_max_tokens
 
     # create a chat completion
-    completion = openai.chat.completions.create(
-        model=model_name,
-        messages=[{"role": "user", "content": f"{req_content}"}],
-        temperature=llm_temperature,
-        top_p=llm_top_p,
-        max_tokens=llm_max_tokens
-    )
+    completion = openai.chat.completions.create(**params)
 
     return completion.choices[0].message.content
 
 
-def fix_single_file(filepath: str, config_file: str, chunk_size: int) -> Tuple[str, Dict]:
+def fix_single_file(filepath: str, config_file: str) -> Tuple[str, Dict]:
     config = Config(config_file)
 
     with open(filepath, 'r', encoding='utf-8') as file:
@@ -79,34 +151,58 @@ def fix_single_file(filepath: str, config_file: str, chunk_size: int) -> Tuple[s
         logger.error(log_info)
         return "", {}
 
+    tokens_model = config.get_llm_param('tokens_model')
+
     api_key = config.get_llm_param('key')
 
     llm_temperature = config.get_llm_param('temperature')
     if llm_temperature is None:
-        llm_temperature = 0.9
+        llm_temperature = 0
+    else:
+        llm_temperature = float(llm_temperature)
     llm_top_p = config.get_llm_param('top_p')
     if llm_top_p is None:
-        llm_top_p = 0.8
+        llm_top_p = 0
+    else:
+        llm_top_p = float(llm_top_p)
     llm_max_tokens= config.get_llm_param('max_tokens')
     if llm_max_tokens is None:
-        llm_max_tokens = 4096
+        llm_max_tokens = 0
+    else:
+        llm_max_tokens = int(llm_max_tokens)
+    llm_chunk_size = config.get_llm_param('chunk_size')
+    if llm_chunk_size is None:
+        llm_chunk_size = 2048
+    else:
+        llm_chunk_size = int(llm_chunk_size)
 
     out_meta = {
         "model": model_name,
-        "temperature": eval(llm_temperature),
-        "top_p": eval(llm_top_p),
-        "max_tokens": eval(llm_max_tokens),
-        "chunk_size": chunk_size,
+        "chunk_size": llm_chunk_size,
         "txt_length": len(file_content)
     }
+    if llm_temperature not in [None, 0]:
+        out_meta["temperature"] = llm_temperature
+    if llm_top_p not in [None, 0]:
+        out_meta["top_p"] = llm_top_p
+    if llm_max_tokens not in [None, 0]:
+        out_meta["max_tokens"] = llm_max_tokens
 
     try:
         resp_contents = []
 
-        chunks = chunk_markdown_with_langchain(file_content, chunk_size)
+        chunks = chunk_token_with_langchain(file_content, llm_chunk_size, tokens_model)
+
+        log_info = f"   chuck {len(chunks)}, {filepath}"
+        print(log_info)
+        logger.info(log_info)
 
         for idx, chunk in enumerate(chunks):
             start_time = datetime.now()
+
+            log_info = f"   start {start_time.strftime('%Y-%m-%d %H:%M:%S')} LLM request: {idx + 1}/{len(chunks)}"
+            print(log_info)
+            logger.info(log_info)
 
             resp_content = request_openai_api(model_url, api_key, model_name, llm_temperature, llm_top_p, llm_max_tokens, chunk)
             resp_contents.append(resp_content)
@@ -116,7 +212,7 @@ def fix_single_file(filepath: str, config_file: str, chunk_size: int) -> Tuple[s
             execution_time = end_time - start_time
             execution_seconds = execution_time.total_seconds()
 
-            log_info = f"   {start_time.strftime('%Y-%m-%d %H:%M:%S')} LLM request: {idx + 1}/{len(chunks)}, execution time {int(execution_seconds)}sec {filepath}"
+            log_info = f"   finish {end_time.strftime('%Y-%m-%d %H:%M:%S')} LLM request: {idx + 1}/{len(chunks)}, execution time {int(execution_seconds)}sec"
             print(log_info)
             logger.info(log_info)
         out_meta["chunk_num"] = len(chunks)
@@ -127,10 +223,11 @@ def fix_single_file(filepath: str, config_file: str, chunk_size: int) -> Tuple[s
         log_info = f"Error fixing {filepath}: {e}"
         print(log_info)
         logger.error(log_info)
+        print(traceback.format_exc())
         return "", out_meta
 
 
-def process_single_file(files_number, idx, filepath, out_folder, metadata, config_file, chunk_size):
+def process_single_file(files_number, idx, filepath, out_folder, metadata, config_file, ocr_types, fix_ocr_types):
 
     fname = os.path.basename(filepath)
     # md_file = os.path.join(out_folder, fname)
@@ -142,7 +239,7 @@ def process_single_file(files_number, idx, filepath, out_folder, metadata, confi
 
     try:
 
-        full_text, out_metadata = fix_single_file(filepath, config_file, chunk_size)
+        full_text, out_metadata = fix_single_file(filepath, config_file)
         if len(full_text.strip()) > 0:
             record_id = None
             parent_record_id = None
@@ -159,7 +256,7 @@ def process_single_file(files_number, idx, filepath, out_folder, metadata, confi
             if 'title' in metadata:
                 title = metadata['title']
 
-            md_path = save_markdown_fix(out_folder, fname, full_text, out_metadata)
+            md_path = save_markdown_fix(out_folder, fname, full_text, out_metadata, ocr_type)
             md_filename = fname.rsplit(".", 1)[0] + ".md"
             if record_id is not None and parent_record_id is not None and ocr_type is not None:
                 pdf_data_opt = PDFDataOperator(config_file)
@@ -171,8 +268,8 @@ def process_single_file(files_number, idx, filepath, out_folder, metadata, confi
                 pdf_data_opt.insert_sub_finish_ocr(parent_record_id, sub_record_id, modified_ocr_type, title, md_path, md_filename)
 
                 # 查找子表MD文件都完成修正后，更新主表finish_ocr标志为9 识别结束
-                ready_fix_num = pdf_data_opt.get_sub_finish_ocr_number(parent_record_id, OCR_TYPES)
-                finish_fix_num = pdf_data_opt.get_sub_finish_ocr_number(parent_record_id, FIX_OCR_TYPES)
+                ready_fix_num = pdf_data_opt.get_sub_finish_ocr_number(parent_record_id, ocr_types)
+                finish_fix_num = pdf_data_opt.get_sub_finish_ocr_number(parent_record_id, fix_ocr_types)
                 if finish_fix_num == ready_fix_num:
                     pdf_data_opt.update_pri_finish_orc(parent_record_id, 9)
                     log_info = f" * * * * * Fixed Success! {parent_record_id} {fname}"
@@ -196,14 +293,14 @@ def process_single_file(files_number, idx, filepath, out_folder, metadata, confi
     except Exception as e:
         log_info = f"Error fixing {filepath}: {e}"
         print(log_info)
-        # print(traceback.format_exc())
+        print(traceback.format_exc())
         logger.error(log_info)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Fix multiple markdown files by LLM.")
     parser.add_argument("--in_folder", help="Input folder with files.")
-    parser.add_argument("--chunk_size", type=int, default=2000, help="Chunk size to fix")
+    # parser.add_argument("--chunk_size", type=int, default=2000, help="Chunk size to fix")
     parser.add_argument("--max", type=int, default=0, help="Maximum number of files to fix")
     parser.add_argument("--metadata_file", type=str, default=None, help="Metadata json file to use for filtering")
     # 增加读取配置文件中数据库信息，通过数据库记录形式取代通过meta_file方式操作多文件 2024-08-13
@@ -211,6 +308,7 @@ def main():
     parser.add_argument("--config_file", default='config.ini', help="config file.")
     # 增加操作类型，convert：识别转化PDF check：检查转化效果
     parser.add_argument("--run_type", default='convert', help="run type type (convert or check)")
+    parser.add_argument("--ocr_types", type=str, default='10,20', help="OCR type (10:marker-Mod 20:MinerU-Mod, such as 10,20)")
 
     args = parser.parse_args()
 
@@ -220,15 +318,21 @@ def main():
     start_time = datetime.now()
     data_type = args.data_type
     config_file = args.config_file
+    ocr_types = args.ocr_types
+    ocr_types_list = ocr_types.split(',')
 
-    pdf_data_opt = PDFDataOperator(config_file)
+    fix_ocr_types_list = []
+    for ocr_type_str in ocr_types_list:
+        fix_ocr_type_str = ocr_type_str[:-1] + '1'
+        fix_ocr_types_list.append(fix_ocr_type_str)
 
     if args.run_type == 'convert':
         metadata = {}
         files = []
         out_folder = None
         if data_type == 'db':
-            records = pdf_data_opt.query_need_fix(OCR_TYPES, args.max)
+            pdf_data_opt = PDFDataOperator(config_file)
+            records = pdf_data_opt.query_need_fix(ocr_types_list, args.max)
             if len(records) <= 0:
                 log_info = f"Error No data needs to be processed!"
                 print(log_info)
@@ -279,7 +383,7 @@ def main():
 
         # Handle chunks if we're processing in parallel
         # Ensure we get all files into a chunk
-        chunk_size = args.chunk_size
+        # chunk_size = args.chunk_size
         files_to_convert = files
 
         files_number = len(files_to_convert)
@@ -289,7 +393,7 @@ def main():
 
         # 执行修复
         for idx, file in enumerate(files_to_convert):
-            process_single_file(files_number, idx, file, out_folder, metadata.get(file), config_file, chunk_size)
+            process_single_file(files_number, idx, file, out_folder, metadata.get(file), config_file, ocr_types_list, fix_ocr_types_list)
 
         end_time = datetime.now()
         # 计算实际执行的时间
@@ -306,12 +410,13 @@ def main():
         print(log_info)
         logger.info(log_info)
     else:
-        records = pdf_data_opt.query_sub_finish_fix(OCR_TYPES, args.max)
+        pdf_data_opt = PDFDataOperator(config_file)
+        records = pdf_data_opt.query_sub_finish_fix(ocr_types_list, args.max)
 
         error_files = []
         # 循环输出查询结果
         for row in records:
-            record_id = row['ID']
+            # record_id = row['ID']
             md_file_path = row['MD_FILE_DIR']
             md_file_name = row['MD_FILE_NAME']
             md_file = os.path.join(md_file_path, md_file_name)

@@ -1,10 +1,12 @@
 import os
 import argparse
-# import traceback
+import traceback
 import json
 
 from datetime import datetime
 from typing import List, Dict, Tuple
+
+import torch
 
 from marker.database.pdf_data_operator import PDFDataOperator
 from marker.logger import setup_logger
@@ -20,13 +22,10 @@ import numpy as np
 
 import openai
 
-from transformers import Qwen2VLForConditionalGeneration, AutoTokenizer, AutoProcessor
+from transformers import Qwen2VLForConditionalGeneration, AutoTokenizer, AutoProcessor, GenerationConfig
 from qwen_vl_utils import process_vision_info
 
 logger = setup_logger()
-
-OCR_TYPE = '30'
-FIX_OCR_TYPE = '31'
 
 
 def replace_string(replace_str: str, str_list: list):
@@ -148,7 +147,7 @@ def convert_pdf_to_images(input_pdf_file_path: str, max_pixels: int, max_pages: 
     images = []
     for idx, scanned_image in enumerate(scanned_images):
         if is_image_empty(scanned_image):
-            log_info = f"   Converting PDF file {idx + 1}/{len(scanned_images)} image is empty!"
+            log_info = f"   Converting PDF file No.{idx + 1} in {len(scanned_images)} page image is empty!"
             print(log_info)
             logger.info(log_info)
             continue
@@ -165,15 +164,16 @@ def request_openai_api(model_url, api_key, model_name, llm_temperature, llm_top_
 
     image_format, image_base64 = image_to_base64(scanned_image)
 
-    prompt_head = "你是Markdown文件的处理专家，识别图片中的文本转化为Markdown文本格式，确保内容与前文连贯。请遵循以下要求：\n" + \
+    prompt_head = "你是Markdown文件的处理专家，识别图片中的内容转化为Markdown文本。请遵循以下要求：\n" + \
                   "1.不添加原文中不存在的任何信息；\n" + \
-                  "2.不要添加额外的句号或其他不必要的标点符号，删除前后无关联且无意义的符号，不要用```、```markdown、``````markdown标记；\n" + \
-                  "3.保持原始结构及所有标题和副标题的完整性，标题使用Markdown标题格式；\n" + \
-                  "4.删除所有页眉页脚，删除句子或段落中的不必要换行，保持段落的断行，删除句子中不必要的空格；\n" + \
-                  "5.保留所有中文、数字、字母组成的编号和序号，所有编号需要使用Markdown标题格式，编号及后续的标题结束后进行换行；\n" + \
-                  f"6.省略无法识别成文字的部分，用图片格式进行标记，图片路径按照顺序用image_{str(scanned_idx).zfill(2)}_01.{image_format}、image_{str(scanned_idx).zfill(2)}_02.{image_format}的形式进行标记；\n" + \
-                  "7.识别出来的公式使用完整正确的LaTex公式语法进行标记；\n" + \
-                  "8.只回复符合格式要求的文本，不添加任何引言、解释或元数据。\n"
+                  "2.不要添加不必要的标点符号，删除前后无关联且无意义的符号，不要用```、```markdown、``````markdown标记；\n" + \
+                  "3.完整标准名称、完整标准编号、前言、附录A、附录B、附录C等标注为一级标题，1、2、3、4、5之类的编号标注为一级标题，1.1、1.2、1.3、1.4、2.1、2.2、2.3之类的标注为二级标题，A.1、A.2、A.3、B.1、B.2、B.3之类的标注为二级标题，1.1.1、1.1.2、1.1.3、2.1.1、2.1.2之类的标注为三级标题，以此类推用四级、五级标题进行标注；" + \
+                  "4.保持原始结构的完整性，标题及所包含的编号需要保持单独一行；\n" + \
+                  "5.删除所有页眉和页脚，删除右上角多余的标准编号，删除页面下方的页码，删除句子或段落中的不必要换行，删除文本中不必要的空格；\n" + \
+                  "6.保留所有中文、数字、字母组成的编号和序号；\n" + \
+                  f"7.省略无法识别成文字的部分，用图片格式进行标记，图片路径按照顺序用image_{str(scanned_idx).zfill(2)}_01.{image_format}、image_{str(scanned_idx).zfill(2)}_02.{image_format}的形式进行标记；\n" + \
+                  "8.识别出来的公式使用完整正确的LaTex公式语法进行标记；\n" + \
+                  "9.只回复符合格式要求的文本，不添加任何引言、解释或元数据。\n"
 
     # create a chat completion
     completion = openai.chat.completions.create(
@@ -194,17 +194,17 @@ def request_openai_api(model_url, api_key, model_name, llm_temperature, llm_top_
 
     return completion.choices[0].message.content
 
-
-def request_local_llm(model_path, llm_temperature, llm_top_p, llm_max_tokens, scanned_images):
+def init_local_llm(model_path):
     # We recommend enabling flash_attention_2 for better acceleration and memory saving, especially in multi-image and video scenarios.
     # model = Qwen2VLForConditionalGeneration.from_pretrained(
     #     "Qwen/Qwen2-VL-7B-Instruct",
     #     torch_dtype=torch.bfloat16,
+    #     torch_dtype="auto"
     #     attn_implementation="flash_attention_2",
     #     device_map="auto",
     # )
     model = Qwen2VLForConditionalGeneration.from_pretrained(
-        model_path, torch_dtype="auto", attn_implementation="flash_attention_2", device_map="auto"
+        model_path, torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2", device_map="auto"
     )
 
     # The default range for the number of visual tokens per image in the model is 4-16384.
@@ -213,58 +213,57 @@ def request_local_llm(model_path, llm_temperature, llm_top_p, llm_max_tokens, sc
     max_pixels = 1280 * 28 * 28
     processor = AutoProcessor.from_pretrained(model_path, min_pixels=min_pixels, max_pixels=max_pixels)
 
-    messages = []
-
-    for scanned_idx, scanned_image in enumerate(scanned_images):
-        image_format, image_base64 = image_to_base64(scanned_image)
-        prompt_head = "你是Markdown文件的处理专家，识别图片中的文本转化为Markdown文本格式，确保内容与前文连贯。请遵循以下要求：\n" + \
-                      "1.不添加原文中不存在的任何信息；\n" + \
-                      "2.不要添加额外的句号或其他不必要的标点符号，删除前后无关联且无意义的符号，不要用```、```markdown、``````markdown标记；\n" + \
-                      "3.保持原始结构及所有标题和副标题的完整性，标题使用Markdown标题格式；\n" + \
-                      "4.删除所有页眉页脚，删除句子或段落中的不必要换行，保持段落的断行，删除句子中不必要的空格；\n" + \
-                      "5.保留所有中文、数字、字母组成的编号和序号，所有编号需要使用Markdown标题格式，编号及后续的标题结束后进行换行；\n" + \
-                      f"6.省略无法识别成文字的部分，用图片格式进行标记，图片路径按照顺序用image_{str(scanned_idx).zfill(2)}_01.{image_format}、image_{str(scanned_idx).zfill(2)}_02.{image_format}的形式进行标记；\n" + \
-                      "7.识别出来的公式使用完整正确的LaTex公式语法进行标记；\n" + \
-                      "8.只回复符合格式要求的文本，不添加任何引言、解释或元数据。\n"
-        message = [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "image": f"data:image;base64,{image_base64}",
-                    },
-                    {"type": "text", "text": f"{prompt_head}"},
-                ],
-            }
-        ]
-        messages.append(message)
+    return model, processor
 
 
-    # Preparation for batch inference
-    texts = [
-        processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=True)
-        for msg in messages
+def request_local_llm(model, processor, llm_temperature, llm_top_p, llm_max_tokens, scanned_image_idx, scanned_image):
+
+    image_format, image_base64 = image_to_base64(scanned_image)
+    prompt_head = "你是Markdown文件的处理专家，识别图片中的文本转化为Markdown文本格式，确保内容与前文连贯。请遵循以下要求：\n" + \
+                  "1.不添加原文中不存在的任何信息；\n" + \
+                  "2.不要添加额外的句号或其他不必要的标点符号，删除前后无关联且无意义的符号，不要用```、```markdown、``````markdown标记；\n" + \
+                  "3.保持原始结构及所有标题和副标题的完整性，标题使用Markdown标题格式；\n" + \
+                  "4.删除所有页眉页脚，删除句子或段落中的不必要换行，保持段落的断行，删除句子中不必要的空格；\n" + \
+                  "5.保留所有中文、数字、字母组成的编号和序号，所有编号需要使用Markdown标题格式，编号及后续的标题结束后进行换行；\n" + \
+                  f"6.省略无法识别成文字的部分，用图片格式进行标记，图片路径按照顺序用image_{str(scanned_image_idx).zfill(2)}_01.{image_format}、image_{str(scanned_image_idx).zfill(2)}_02.{image_format}的形式进行标记；\n" + \
+                  "7.识别出来的公式使用完整正确的LaTex公式语法进行标记；\n" + \
+                  "8.只回复符合格式要求的文本，不添加任何引言、解释或元数据。\n"
+    message = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "image": f"data:image;base64,{image_base64}",
+                },
+                {"type": "text", "text": f"{prompt_head}"},
+            ],
+        }
     ]
-    image_inputs, video_inputs = process_vision_info(messages)
+
+    # Preparation for inference
+    text = processor.apply_chat_template(
+        message, tokenize=False, add_generation_prompt=True
+    )
+    image_inputs, video_inputs = process_vision_info(message)
     inputs = processor(
-        text=[texts],
+        text=[text],
         images=image_inputs,
         videos=video_inputs,
         padding=True,
         return_tensors="pt",
     )
     inputs = inputs.to("cuda")
-
-    # Batch Inference
-    generated_ids = model.generate(**inputs, max_new_tokens=llm_max_tokens)
+    # generation_config = GenerationConfig(max_new_tokens=llm_max_tokens, temperature=llm_temperature, top_k=llm_top_p)
+    # Inference: Generation of the output
+    generated_ids = model.generate(**inputs, max_new_tokens=128)
     generated_ids_trimmed = [
         out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
     ]
-    output_texts = processor.batch_decode(
+    output_text = processor.batch_decode(
         generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
     )
-    return output_texts
+    return "".join(output_text)
 
 
 def convert_single_file(filepath: str, config_file: str, is_image_save: bool) -> Tuple[str, Dict, Dict[str, Image.Image]]:
@@ -321,76 +320,59 @@ def convert_single_file(filepath: str, config_file: str, is_image_save: bool) ->
         # "temperature": llm_temperature,
         # "top_p": llm_top_p,
         "model_type": model_type,
-        "max_tokens": llm_max_tokens,
+        # "max_tokens": llm_max_tokens,
         "max_pixels": llm_max_pixels,
         "image_size": len(scanned_images)
     }
 
     # return "", out_meta 测试用
 
+    model = None
+    processor = None
+    if model_type == 'local':
+        model, processor = init_local_llm(model_name)
+
     try:
         resp_contents = []
-        if model_type == 'net':
-            for idx, scanned_image in enumerate(scanned_images):
-                start_time = datetime.now()
-
-                resp_content = request_openai_api(model_url, api_key, model_name, llm_temperature, llm_top_p, llm_max_tokens, idx, scanned_image)
-
-                # 处理多余的Markdown标记
-                replace_strs = ['``` ```markdown', '``````markdown', '```markdown', '```']
-                resp_content = replace_string(resp_content, replace_strs)
-                resp_contents.append(resp_content)
-
-                end_time = datetime.now()
-                # 计算实际执行的时间
-                execution_time = end_time - start_time
-                execution_seconds = execution_time.total_seconds()
-
-                log_info = f"   {start_time.strftime('%Y-%m-%d %H:%M:%S')} LLM request: {idx + 1}/{len(scanned_images)}, execution time {int(execution_seconds)}sec {filepath}"
-                print(log_info)
-                logger.info(log_info)
-            out_meta["fix_stats"] = "success"
-            if is_image_save:
-                image_dict = images_to_dict(scanned_images)
-            else:
-                image_dict = {}
-            return "".join(resp_contents), out_meta, image_dict
-        else:
+        for idx, scanned_image in enumerate(scanned_images):
             start_time = datetime.now()
 
-            resp_contents = request_local_llm(model_name, llm_temperature, llm_top_p, llm_max_tokens, scanned_images)
+            resp_content = ''
+            if model_type == 'net':
+                resp_content = request_openai_api(model_url, api_key, model_name, llm_temperature, llm_top_p, llm_max_tokens, idx, scanned_image)
+            elif model_type == 'local':
+                resp_content = request_local_llm(model, processor, llm_temperature, llm_top_p, llm_max_tokens, idx, scanned_image)
 
-            finish_resp_contents = []
-            for resp_content in resp_contents:
-                # 处理多余的Markdown标记
-                replace_strs = ['``` ```markdown', '``````markdown', '```markdown', '```']
-                resp_content = replace_string(resp_content, replace_strs)
-                finish_resp_contents.append(resp_content)
+            # 处理多余的Markdown标记
+            replace_strs = ['``` ```markdown', '``````markdown', '```markdown', '```']
+            resp_content = replace_string(resp_content, replace_strs)
+            resp_contents.append(resp_content)
 
             end_time = datetime.now()
             # 计算实际执行的时间
             execution_time = end_time - start_time
             execution_seconds = execution_time.total_seconds()
 
-            log_info = f"   {start_time.strftime('%Y-%m-%d %H:%M:%S')} LLM request: {len(scanned_images)}, execution time {int(execution_seconds)}sec {filepath}"
+            log_info = f"   {start_time.strftime('%Y-%m-%d %H:%M:%S')} LLM request: {idx + 1}/{len(scanned_images)}, execution time {int(execution_seconds)}sec {filepath}"
             print(log_info)
             logger.info(log_info)
 
-            out_meta["fix_stats"] = "success"
-            if is_image_save:
-                image_dict = images_to_dict(scanned_images)
-            else:
-                image_dict = {}
-            return "".join(finish_resp_contents), out_meta, image_dict
+        out_meta["convert_stats"] = "success"
+        if is_image_save:
+            image_dict = images_to_dict(scanned_images)
+        else:
+            image_dict = {}
+        return "".join(resp_contents), out_meta, image_dict
     except Exception as e:
         out_meta["fix_stats"] = "fail"
-        log_info = f"Error fixing {filepath}: {e}"
+        log_info = f"Error Converting {filepath}: {e}"
         print(log_info)
         logger.error(log_info)
+        print(traceback.format_exc())
         return "", out_meta, {}
 
 
-def process_single_pdf(files_number, idx, filepath, out_folder, metadata, config_file, is_image_save):
+def process_single_pdf(files_number, idx, filepath, out_folder, metadata, config_file, is_image_save, ocr_type, fix_ocr_type):
     fname = os.path.basename(filepath)
     if not os.path.exists(filepath):
         log_info = f"File not exist: {filepath}."
@@ -413,7 +395,7 @@ def process_single_pdf(files_number, idx, filepath, out_folder, metadata, config
             if 'data_type' in metadata:
                 data_type = metadata['data_type']
 
-            md_path = save_markdown(out_folder, fname, full_text, scanned_images, out_metadata)
+            md_path = save_markdown(out_folder, fname, full_text, scanned_images, out_metadata, ocr_type)
             md_filename = fname.rsplit(".", 1)[0] + ".md"
             if data_type == 'db':
                 if record_id is not None:
@@ -474,6 +456,7 @@ def main():
     # 增加操作类型，convert：识别转化PDF check：检查转化效果
     parser.add_argument("--run_type", default='convert', help="run type type (convert or check)")
     parser.add_argument("--save_image", type=bool, default=True, help="save images (default True)")
+    parser.add_argument("--ocr_type", type=str, default='30', help="OCR type (10:marker mod 20:MinerU mod 30:VL Model)")
 
     args = parser.parse_args()
 
@@ -484,15 +467,16 @@ def main():
     data_type = args.data_type
     config_file = args.config_file
     save_image = args.save_image
-
-    pdf_data_opt = PDFDataOperator(config_file)
+    ocr_type = args.ocr_type
+    fix_ocr_type = ocr_type[:-1] + '1'
 
     if args.run_type == 'convert':
         metadata = {}
         files = []
         out_folder = None
         if data_type == 'db':
-            records = pdf_data_opt.query_need_ocr(OCR_TYPE, args.max)
+            pdf_data_opt = PDFDataOperator(config_file)
+            records = pdf_data_opt.query_need_ocr(ocr_type, args.max)
             if len(records) <= 0:
                 log_info = f"Error No data needs to be processed!"
                 print(log_info)
@@ -564,7 +548,7 @@ def main():
         logger.info(log_info)
 
         for idx, file in enumerate(files_to_convert):
-            process_single_pdf(files_number, idx, file, out_folder, metadata.get(file), config_file, save_image)
+            process_single_pdf(files_number, idx, file, out_folder, metadata.get(file), config_file, save_image, ocr_type, fix_ocr_type)
 
         end_time = datetime.now()
         # 计算实际执行的时间
@@ -577,11 +561,12 @@ def main():
 
         average_time = round(execution_seconds / len(files_to_convert))
 
-        log_info = f" * * * * * {args.run_types.capitalize()}ed {files_number} pdfs. Ended at {end_time.strftime('%Y-%m-%d %H:%M:%S')}. Total execution time {int(hours)} hour {int(minutes)} min {int(seconds)} sec, average time {average_time} sec/record"
+        log_info = f" * * * * * {args.run_type.capitalize()}ed {files_number} pdfs. Ended at {end_time.strftime('%Y-%m-%d %H:%M:%S')}. Total execution time {int(hours)} hour {int(minutes)} min {int(seconds)} sec, average time {average_time} sec/record"
         print(log_info)
         logger.info(log_info)
     else:
-        records = pdf_data_opt.query_sub_finish_ocr(OCR_TYPE, args.max)
+        pdf_data_opt = PDFDataOperator(config_file)
+        records = pdf_data_opt.query_sub_finish_ocr(ocr_type, args.max)
 
         error_files = []
         # 循环输出查询结果

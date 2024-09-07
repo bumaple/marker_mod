@@ -34,8 +34,6 @@ from marker.database.pdf_data_operator import PDFDataOperator
 from marker.logger import setup_logger
 
 logger = setup_logger()
-
-OCR_TYPE = '10'
 # 增加 2024-08-13 end
 
 def worker_init(shared_model):
@@ -52,10 +50,10 @@ def worker_exit():
 
 
 def process_single_pdf(args):
-    files_number, idx, filepath, out_folder, metadata, min_length, config_file = args
+    files_number, idx, filepath, out_folder, metadata, min_length, config_file, ocr_type = args
 
     fname = os.path.basename(filepath)
-    if markdown_exists(out_folder, fname):
+    if markdown_exists(out_folder, fname, ocr_type):
         return
 
     try:
@@ -82,7 +80,7 @@ def process_single_pdf(args):
                 record_id = metadata['record_id']
             if 'title' in metadata:
                 title = metadata['title']
-            md_path = save_markdown(out_folder, fname, full_text, images, out_metadata)
+            md_path = save_markdown(out_folder, fname, full_text, images, out_metadata, ocr_type)
             md_filename = fname.rsplit(".", 1)[0] + ".md"
             if record_id is not None:
                 pdf_data_opt = PDFDataOperator(config_file)
@@ -90,7 +88,7 @@ def process_single_pdf(args):
 
                 record_num = pdf_data_opt.get_sub_record_number(record_id)
                 sub_record_id = record_id + '_' + str(int(record_num) + 1).zfill(3)
-                pdf_data_opt.insert_sub_finish_ocr(record_id, sub_record_id, OCR_TYPE, title, md_path, md_filename)
+                pdf_data_opt.insert_sub_finish_ocr(record_id, sub_record_id, ocr_type, title, md_path, md_filename)
 
             md_fullname = os.path.join(md_path, md_filename)
             # 计算百分比
@@ -126,38 +124,9 @@ def main():
     parser.add_argument("--config_file", default='config.ini', help="config file.")
     # 增加操作类型，convert：识别转化PDF check：检查转化效果
     parser.add_argument("--run_type", default='convert', help="run type type (convert or check)")
+    parser.add_argument("--ocr_type", type=str, default='10', help="OCR type (10:marker mod 20:MinerU mod)")
 
     args = parser.parse_args()
-
-    in_folder = os.path.abspath(args.in_folder)
-    out_folder = os.path.abspath(args.out_folder)
-    files = [os.path.join(in_folder, f) for f in os.listdir(in_folder)]
-    files = [f for f in files if os.path.isfile(f)]
-    os.makedirs(out_folder, exist_ok=True)
-
-    # Handle chunks if we're processing in parallel
-    # Ensure we get all files into a chunk
-    chunk_size = math.ceil(len(files) / args.num_chunks)
-    start_idx = args.chunk_idx * chunk_size
-    end_idx = start_idx + chunk_size
-    files_to_convert = files[start_idx:end_idx]
-
-    # Limit files converted if needed
-    if args.max:
-        files_to_convert = files_to_convert[:args.max]
-
-    metadata = {}
-    if args.metadata_file:
-        metadata_file = os.path.abspath(args.metadata_file)
-        with open(metadata_file, "r") as f:
-            metadata = json.load(f)
-
-    total_processes = min(len(files_to_convert), args.workers)
-
-    try:
-        mp.set_start_method('spawn') # Required for CUDA, forkserver doesn't work
-    except RuntimeError:
-        raise RuntimeError("Set start method to spawn twice. This may be a temporary issue with the script. Please try running it again.")
 
     # 增加读取配置文件中数据库信息，通过数据库记录形式取代通过meta_file方式操作多文件 2024-08-13
     # begin
@@ -165,14 +134,15 @@ def main():
     start_time = datetime.now()
     data_type = args.data_type
     config_file = args.config_file
-    pdf_data_opt = PDFDataOperator(config_file)
+    ocr_type = args.ocr_type
 
     if args.run_type == 'convert':
         metadata = {}
         files = []
         out_folder = ''
         if data_type == 'db':
-            records = pdf_data_opt.query_need_ocr(OCR_TYPE, args.max)
+            pdf_data_opt = PDFDataOperator(config_file)
+            records = pdf_data_opt.query_need_ocr(ocr_type, args.max)
             if len(records) <= 0:
                 log_info = f"Error No data needs to be processed!"
                 print(log_info)
@@ -222,13 +192,6 @@ def main():
 
         total_processes = min(len(files_to_convert), args.workers)
 
-        # Dynamically set GPU allocation per task based on GPU ram
-        if settings.CUDA:
-            tasks_per_gpu = settings.INFERENCE_RAM // settings.VRAM_PER_TASK if settings.CUDA else 0
-            total_processes = int(min(tasks_per_gpu, total_processes))
-        else:
-            total_processes = int(total_processes)
-
         try:
             mp.set_start_method('spawn') # Required for CUDA, forkserver doesn't work
         except RuntimeError:
@@ -251,7 +214,7 @@ def main():
         log_info = f" * * * * * {args.run_type.capitalize()}ing {files_number} pdfs in chunk {args.chunk_idx + 1}/{args.num_chunks} with {total_processes} processes. Started at {start_time.strftime('%Y-%m-%d %H:%M:%S')}"
         print(log_info)
         logger.info(log_info)
-        task_args = [(files_number, idx, f, out_folder, metadata.get(f), args.min_length, config_file) for idx, f in enumerate(files_to_convert)]
+        task_args = [(files_number, idx, f, out_folder, metadata.get(f), args.min_length, config_file, ocr_type) for idx, f in enumerate(files_to_convert)]
 
         with mp.Pool(processes=total_processes, initializer=worker_init, initargs=(model_lst,)) as pool:
             list(tqdm(pool.imap(process_single_pdf, task_args), total=len(task_args), desc="Processing PDFs", unit="pdf"))
@@ -276,12 +239,13 @@ def main():
         print(log_info)
         logger.info(log_info)
     else:
-        records = pdf_data_opt.query_sub_finish_ocr(OCR_TYPE, args.max)
+        pdf_data_opt = PDFDataOperator(config_file)
+        records = pdf_data_opt.query_sub_finish_ocr(ocr_type, args.max)
 
         error_files = []
         # 循环输出查询结果
         for row in records:
-            record_id = row['ID']
+            # record_id = row['ID']
             md_file_path = row['MD_FILE_DIR']
             md_file_name = row['MD_FILE_NAME']
             md_file = os.path.join(md_file_path, md_file_name)

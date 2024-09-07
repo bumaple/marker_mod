@@ -31,8 +31,6 @@ logging.getLogger('detectron2').setLevel(logging.ERROR)
 logging.getLogger('magic_pdf').setLevel(logging.ERROR)
 # 增加 2024-08-13 end
 
-OCR_TYPE = '20'
-
 def json_md_dump(
         pipe,
         md_writer,
@@ -66,7 +64,7 @@ def json_md_dump(
     )
 
 
-def process_single_pdf(files_number, idx, pdf_path, output_dir, metadata, config_file):
+def process_single_pdf(files_number, idx, pdf_path, output_dir, metadata, config_file, ocr_type):
     """
     执行从 pdf 转换到 json、md 的过程，输出 md 和 json 文件到 pdf 文件所在的目录
 
@@ -89,7 +87,7 @@ def process_single_pdf(files_number, idx, pdf_path, output_dir, metadata, config
         else:
             output_path_old = os.path.join(os.path.dirname(pdf_path), pdf_name)
 
-        timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp_str = ocr_type + '_' + datetime.now().strftime('%Y%m%d_%H%M%S')
         output_path = os.path.join(output_path_old, timestamp_str)
 
         output_image_path = os.path.join(output_path, 'images')
@@ -161,7 +159,7 @@ def process_single_pdf(files_number, idx, pdf_path, output_dir, metadata, config
                 record_num = pdf_data_opt.get_sub_record_number(record_id)
                 # print(f" * * * * * record_num:{record_num}")
                 sub_record_id = record_id + '_' + str(int(record_num) + 1).zfill(3)
-                pdf_data_opt.insert_sub_finish_ocr(record_id, sub_record_id, OCR_TYPE, title, md_path, md_filename)
+                pdf_data_opt.insert_sub_finish_ocr(record_id, sub_record_id, ocr_type, title, md_path, md_filename)
 
             md_fullname = os.path.join(md_path, md_filename)
             # 计算百分比
@@ -190,6 +188,7 @@ def main():
     parser.add_argument("--config_file", default='config.ini', help="config file.")
     # 增加操作类型，convert：识别转化PDF check：检查转化效果
     parser.add_argument("--run_type", default='convert', help="run type type (convert or check)")
+    parser.add_argument("--ocr_type", type=str, default='20', help="OCR type (10:marker mod 20:MinerU mod)")
 
     args = parser.parse_args()
 
@@ -199,14 +198,15 @@ def main():
     start_time = datetime.now()
     data_type = args.data_type
     config_file = args.config_file
-    pdf_data_opt = PDFDataOperator(config_file)
+    ocr_type = args.ocr_type
 
     if args.run_type == 'convert':
         metadata = {}
         files = []
         out_folder = None
         if data_type == 'db':
-            records = pdf_data_opt.query_need_ocr(OCR_TYPE, args.max)
+            pdf_data_opt = PDFDataOperator(config_file)
+            records = pdf_data_opt.query_need_ocr(ocr_type, args.max)
             if len(records) <= 0:
                 log_info = f"Error No data needs to be processed!"
                 print(log_info)
@@ -261,7 +261,7 @@ def main():
         logger.info(log_info)
 
         for idx, file in enumerate(files_to_convert):
-            process_single_pdf(files_number, idx, file, out_folder, metadata.get(file), config_file)
+            process_single_pdf(files_number, idx, file, out_folder, metadata.get(file), config_file, ocr_type)
 
         end_time = datetime.now()
         # 计算实际执行的时间
@@ -278,12 +278,13 @@ def main():
         print(log_info)
         logger.info(log_info)
     else:
-        records = pdf_data_opt.query_sub_finish_ocr(OCR_TYPE, args.max)
+        pdf_data_opt = PDFDataOperator(config_file)
+        records = pdf_data_opt.query_sub_finish_ocr(ocr_type, args.max)
 
         error_files = []
         # 循环输出查询结果
         for row in records:
-            record_id = row['ID']
+            # record_id = row['ID']
             md_file_path = row['MD_FILE_DIR']
             md_file_name = row['MD_FILE_NAME']
             md_file = os.path.join(md_file_path, md_file_name)

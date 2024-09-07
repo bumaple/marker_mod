@@ -8,13 +8,13 @@ from datetime import datetime
 # 增加 2024-08-13 end
 
 
-def get_subfolder_path(out_folder, fname, is_timestamp_path: bool = True):
+def get_subfolder_path(out_folder, fname, ocr_type, is_timestamp_path: bool = True):
     subfolder_name = fname.rsplit('.', 1)[0]
     subfolder_path = os.path.join(out_folder, subfolder_name)
 
     # 增加 2024-08-13 begin
     if is_timestamp_path:
-        timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp_str = ocr_type + '_' + datetime.now().strftime('%Y%m%d_%H%M%S')
         subfolder_path_new = os.path.join(subfolder_path, timestamp_str)
     else:
         subfolder_path_new = subfolder_path
@@ -23,22 +23,22 @@ def get_subfolder_path(out_folder, fname, is_timestamp_path: bool = True):
     return subfolder_path_new
 
 
-def get_markdown_filepath(out_folder, fname):
-    subfolder_path = get_subfolder_path(out_folder, fname)
+def get_markdown_filepath(out_folder, fname, ocr_type):
+    subfolder_path = get_subfolder_path(out_folder, fname, ocr_type)
     os.makedirs(subfolder_path, exist_ok=True)
     out_filename = fname.rsplit(".", 1)[0] + ".md"
     out_filename = os.path.join(subfolder_path, out_filename)
     return subfolder_path, out_filename
 
 
-def markdown_exists(out_folder, fname):
-    subfolder_path, out_filename = get_markdown_filepath(out_folder, fname)
+def markdown_exists(out_folder, fname, ocr_type):
+    subfolder_path, out_filename = get_markdown_filepath(out_folder, fname, ocr_type)
     return os.path.exists(out_filename)
 
 
-def save_markdown(out_folder, fname, full_text, images, out_metadata):
+def save_markdown(out_folder, fname, full_text, images, out_metadata, ocr_type):
     # 修改 2024-08-29 begin
-    subfolder_path, markdown_filepath = get_markdown_filepath(out_folder, fname)
+    subfolder_path, markdown_filepath = get_markdown_filepath(out_folder, fname, ocr_type)
     # 修改 2024-08-29 end
     out_meta_filepath = markdown_filepath.rsplit(".", 1)[0] + "_meta.json"
 
@@ -54,11 +54,11 @@ def save_markdown(out_folder, fname, full_text, images, out_metadata):
     return subfolder_path
 
 
-def save_markdown_fix(out_folder, fname, full_text, out_metadata):
+def save_markdown_fix(out_folder, fname, full_text, out_metadata, ocr_type):
     # 去除两级目录，回到pdf文件所在目录
     new_out_folder = remove_last_dir(out_folder, 2)
 
-    subfolder_path, markdown_filepath = get_markdown_filepath(new_out_folder, fname)
+    subfolder_path, markdown_filepath = get_markdown_filepath(new_out_folder, fname, ocr_type)
     out_meta_filepath = markdown_filepath.rsplit(".", 1)[0] + "_meta.json"
 
     with open(markdown_filepath, "w+", encoding='utf-8') as f:
