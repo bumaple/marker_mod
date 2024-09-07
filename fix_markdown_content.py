@@ -16,6 +16,7 @@ from marker.config_read import Config
 import transformers
 from langchain.text_splitter import MarkdownTextSplitter
 
+import http.client
 import openai
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false" # Disabling parallelism to avoid deadlocks
@@ -87,6 +88,33 @@ def get_model_tokenizer_size(tokens_model, text):
     return len(result)
 
 
+def is_deepseek_balance_valid(api_key):
+    conn = http.client.HTTPSConnection("api.deepseek.com")
+    payload = ''
+    headers = {
+        'Accept': 'application/json',
+        'Authorization': f'Bearer {api_key}'
+    }
+    conn.request("GET", "/user/balance", payload, headers)
+    res = conn.getresponse()
+    data = res.read()
+    resp_content = data.decode("utf-8")
+    try:
+        json_data = json.loads(resp_content)
+        if 'is_available' in json_data:
+            balance_info = json_data.get('balance_infos', [])
+            if balance_info and 'total_balance' in balance_info[0]:
+                total_balance = balance_info[0]['total_balance']
+                return json_data['is_available'], float(total_balance)
+            else:
+                return json_data['is_available'], 0
+        else:
+            return False, 0
+    except json.JSONDecodeError:
+        print("Error: Unable to decode the response as JSON.")
+        return False, 0
+
+
 def request_openai_api(model_url, api_key, model_name, llm_temperature: float, llm_top_p: float, llm_max_tokens: int, chunk_content):
     openai.api_key = api_key
     openai.base_url = model_url
@@ -132,7 +160,7 @@ def request_openai_api(model_url, api_key, model_name, llm_temperature: float, l
     return completion.choices[0].message.content
 
 
-def fix_single_file(filepath: str, config_file: str) -> Tuple[str, Dict]:
+def fix_single_file(filepath: str, config_file: str) -> Tuple[str, Dict, int]:
     config = Config(config_file)
 
     with open(filepath, 'r', encoding='utf-8') as file:
@@ -143,13 +171,14 @@ def fix_single_file(filepath: str, config_file: str) -> Tuple[str, Dict]:
         log_info = f"model name is not exist!"
         print(log_info)
         logger.error(log_info)
-        return "", {}
+        return "", {}, 0
+
     model_url = config.get_llm_param('url')
     if model_url is None:
         log_info = f"model url is not exist!"
         print(log_info)
         logger.error(log_info)
-        return "", {}
+        return "", {}, 0
 
     tokens_model = config.get_llm_param('tokens_model')
 
@@ -160,21 +189,34 @@ def fix_single_file(filepath: str, config_file: str) -> Tuple[str, Dict]:
         llm_temperature = 0
     else:
         llm_temperature = float(llm_temperature)
+
     llm_top_p = config.get_llm_param('top_p')
     if llm_top_p is None:
         llm_top_p = 0
     else:
         llm_top_p = float(llm_top_p)
+
     llm_max_tokens= config.get_llm_param('max_tokens')
     if llm_max_tokens is None:
         llm_max_tokens = 0
     else:
         llm_max_tokens = int(llm_max_tokens)
+
     llm_chunk_size = config.get_llm_param('chunk_size')
     if llm_chunk_size is None:
         llm_chunk_size = 2048
     else:
         llm_chunk_size = int(llm_chunk_size)
+
+    max_tokens_multiple = config.get_llm_param('max_tokens_multiple')
+    if max_tokens_multiple is None:
+        max_tokens_multiple = 0
+    else:
+        max_tokens_multiple = int(max_tokens_multiple)
+
+    check_balance = config.get_llm_param('check_balance')
+    if check_balance is None:
+        check_balance = False
 
     out_meta = {
         "model": model_name,
@@ -189,6 +231,26 @@ def fix_single_file(filepath: str, config_file: str) -> Tuple[str, Dict]:
         out_meta["max_tokens"] = llm_max_tokens
 
     try:
+        if check_balance:
+            is_valid, balance_value = is_deepseek_balance_valid(api_key)
+            if not is_valid:
+                log_info = f" * * * * * DeepSeek balance has no balance! * * * * * "
+                print(log_info)
+                logger.error(log_info)
+                return "", out_meta, 9
+            elif balance_value < 0.1:
+                log_info = f" * * * * * DeepSeek balance has less 0.1! * * * * * "
+                print(log_info)
+                logger.error(log_info)
+                return "", out_meta, 9
+
+        file_content_tokens_size = get_model_tokenizer_size(tokens_model, file_content)
+        if llm_max_tokens != 0 and max_tokens_multiple != 0 and file_content_tokens_size > max_tokens_multiple * llm_max_tokens:
+            log_info = f" * * * * * File Content exceeds the limit length! {file_content_tokens_size} - MAX:{max_tokens_multiple * llm_max_tokens}* * * * * "
+            print(log_info)
+            logger.info(log_info)
+            return "", out_meta, 0
+
         resp_contents = []
 
         chunks = chunk_token_with_langchain(file_content, llm_chunk_size, tokens_model)
@@ -217,14 +279,14 @@ def fix_single_file(filepath: str, config_file: str) -> Tuple[str, Dict]:
             logger.info(log_info)
         out_meta["chunk_num"] = len(chunks)
         out_meta["fix_stats"] = "success"
-        return "".join(resp_contents), out_meta
+        return "".join(resp_contents), out_meta, 1
     except Exception as e:
         out_meta["fix_stats"] = "fail"
         log_info = f"Error fixing {filepath}: {e}"
         print(log_info)
         logger.error(log_info)
         print(traceback.format_exc())
-        return "", out_meta
+        return "", out_meta, 0
 
 
 def process_single_file(files_number, idx, filepath, out_folder, metadata, config_file, ocr_types, fix_ocr_types):
@@ -235,11 +297,11 @@ def process_single_file(files_number, idx, filepath, out_folder, metadata, confi
         log_info = f"File not exist: {filepath}."
         print(log_info)
         logger.error(log_info)
-        return
+        return 0
 
     try:
 
-        full_text, out_metadata = fix_single_file(filepath, config_file)
+        full_text, out_metadata, resp_status = fix_single_file(filepath, config_file)
         if len(full_text.strip()) > 0:
             record_id = None
             parent_record_id = None
@@ -282,19 +344,23 @@ def process_single_file(files_number, idx, filepath, out_folder, metadata, confi
                 log_info = f" * * * * * Fixing {idx+1}/{files_number}({percentage:.2f}%) {fname}, id:{sub_record_id}, storing in {md_fullname}"
                 print(log_info)
                 logger.info(log_info)
+                return 1
             else:
                 log_info = f" * * * * * Fixing Error {idx + 1} {fname}, data Error!\n{metadata}"
                 print(log_info)
                 logger.error(log_info)
+                return 0
         else:
             log_info = f"Empty file: {filepath}.  Could not fix."
             print(log_info)
             logger.info(log_info)
+            return resp_status
     except Exception as e:
         log_info = f"Error fixing {filepath}: {e}"
         print(log_info)
         print(traceback.format_exc())
         logger.error(log_info)
+        return 0
 
 
 def main():
@@ -393,7 +459,9 @@ def main():
 
         # 执行修复
         for idx, file in enumerate(files_to_convert):
-            process_single_file(files_number, idx, file, out_folder, metadata.get(file), config_file, ocr_types_list, fix_ocr_types_list)
+            resp_status = process_single_file(files_number, idx, file, out_folder, metadata.get(file), config_file, ocr_types_list, fix_ocr_types_list)
+            if resp_status == 9:
+                break
 
         end_time = datetime.now()
         # 计算实际执行的时间
