@@ -22,7 +22,7 @@ def send_post_request(url, require, text_value):
 
 if __name__ == '__main__':
     # 定义服务器地址和端口
-    url = 'http://127.0.0.1:9992/fix_table'  # 修改为你的服务器端口
+    url = 'http://10.136.198.30:9992/fix_table'  # 修改为你的服务器端口
 
     # 要发送的 text 数据
     require_value = "把第一列和第二列合并为一列"

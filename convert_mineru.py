@@ -64,7 +64,7 @@ def json_md_dump(
     )
 
 
-def process_single_pdf(files_number, idx, pdf_path, output_dir, metadata, config_file, ocr_type):
+def process_single_pdf(files_number, idx, pdf_path, output_dir, metadata, config_file, ocr_type, parse_method):
     """
     执行从 pdf 转换到 json、md 的过程，输出 md 和 json 文件到 pdf 文件所在的目录
 
@@ -75,7 +75,7 @@ def process_single_pdf(files_number, idx, pdf_path, output_dir, metadata, config
     output_dir: 输出结果的目录地址，会生成一个以 pdf 文件名命名的文件夹并保存所有结果
     """
     model_json_path = None
-    parse_method = 'auto'
+    # parse_method = 'auto'
     is_json_md_dump = True
     try:
         # pdf_name = os.path.basename(pdf_path).split(".")[0]
@@ -189,6 +189,7 @@ def main():
     # 增加操作类型，convert：识别转化PDF check：检查转化效果
     parser.add_argument("--run_type", default='convert', help="run type type (convert or check)")
     parser.add_argument("--ocr_type", type=str, default='20', help="OCR type (10:marker mod 20:MinerU mod)")
+    parser.add_argument("--parse_method", type=str, default='auto', help="parse method (auto、ocr、txt)")
 
     args = parser.parse_args()
 
@@ -199,6 +200,7 @@ def main():
     data_type = args.data_type
     config_file = args.config_file
     ocr_type = args.ocr_type
+    parse_method = args.parse_method
 
     if args.run_type == 'convert':
         metadata = {}
@@ -261,7 +263,7 @@ def main():
         logger.info(log_info)
 
         for idx, file in enumerate(files_to_convert):
-            process_single_pdf(files_number, idx, file, out_folder, metadata.get(file), config_file, ocr_type)
+            process_single_pdf(files_number, idx, file, out_folder, metadata.get(file), config_file, ocr_type, parse_method)
 
         end_time = datetime.now()
         # 计算实际执行的时间
