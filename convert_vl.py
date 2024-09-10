@@ -413,16 +413,16 @@ def process_single_pdf(files_number, idx, filepath, out_folder, metadata, config
                 if record_id is not None:
                     pdf_data_opt = PDFDataOperator(config_file)
                     # 修改OCT_TYPE标志最后一个字符为1，表示完成修正
-                    modified_ocr_type = '31'
+                    # modified_ocr_type = '31'
                     # modified_ocr_type = ocr_type[:-1] + '1'
                     # pdf_data_opt.update_sub_finish_fix(record_id, modified_string, md_path, md_filename)
                     record_num = pdf_data_opt.get_sub_record_number(record_id)
                     sub_record_id = record_id + '_' + str(int(record_num) + 1).zfill(3)
-                    pdf_data_opt.insert_sub_finish_ocr(record_id, sub_record_id, modified_ocr_type, title, md_path, md_filename)
+                    pdf_data_opt.insert_sub_finish_ocr(record_id, sub_record_id, ocr_type, title, md_path, md_filename)
 
                     # 查找子表MD文件都完成修正后，更新主表finish_ocr标志为9 识别结束
-                    # ready_fix_num = pdf_data_opt.get_sub_finish_ocr_number(record_id, OCR_TYPES)
-                    # finish_fix_num = pdf_data_opt.get_sub_finish_ocr_number(record_id, FIX_OCR_TYPES)
+                    # ready_fix_num = pdf_data_opt.get_sub_finish_ocr_number(record_id, {ocr_type})
+                    # finish_fix_num = pdf_data_opt.get_sub_finish_ocr_number(record_id, {fix_ocr_type})
                     # if finish_fix_num == ready_fix_num:
                     #     pdf_data_opt.update_pri_finish_orc(record_id, 9)
                     #     log_info = f" * * * * * Converted Success! {record_id} {fname}"
@@ -452,7 +452,7 @@ def process_single_pdf(files_number, idx, filepath, out_folder, metadata, config
     except Exception as e:
         log_info = f"Error Converting {filepath}: {e}"
         print(log_info)
-        # print(traceback.format_exc())
+        print(traceback.format_exc())
         logger.error(log_info)
 
 
