@@ -1,5 +1,6 @@
 import os
 import argparse
+import time
 import traceback
 import json
 
@@ -7,6 +8,7 @@ from datetime import datetime
 from typing import Dict, Tuple
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from openai import BadRequestError
 
 from marker.database.pdf_data_operator import PDFDataOperator
 from marker.logger import setup_logger
@@ -115,7 +117,7 @@ def is_deepseek_balance_valid(api_key):
         return False, 0
 
 
-def request_openai_api(model_url, api_key, model_name, llm_temperature: float, llm_top_p: float, llm_max_tokens: int, chunk_content):
+def request_openai_api(model_url, api_key, model_name, llm_temperature: float, llm_top_p: float, llm_max_tokens: int, chunk_content, attempt_limit: int, attempt_sleep_second: int) -> Tuple[str, int]:
     openai.api_key = api_key
     openai.base_url = model_url
 
@@ -153,10 +155,27 @@ def request_openai_api(model_url, api_key, model_name, llm_temperature: float, l
     if llm_top_p not in [None, 0]:
         params["top_p"] = llm_top_p
 
-    # create a chat completion
-    completion = openai.chat.completions.create(**params)
-
-    return completion.choices[0].message.content
+    # 发送请求，如果不成功停止5秒后重发，重复3次
+    for attempt in range(attempt_limit):
+        try:
+            completion = openai.chat.completions.create(**params)
+            return completion.choices[0].message.content, 1
+        except BadRequestError as e:
+            if e.code == 'RequestTimeOut':
+                log_info = f"Attempt {attempt + 1}/{attempt_limit}: Request timed out. Retrying in {attempt_sleep_second} seconds..."
+                print(log_info)
+                logger.error(log_info)
+                time.sleep(attempt_sleep_second)
+            else:
+                log_info = f"Error Converting: {e}"
+                print(log_info)
+                logger.error(log_info)
+                return '', 0
+        except Exception as e:
+            log_info = f"Error Converting: {e}"
+            print(log_info)
+            logger.error(log_info)
+            return '', 0
 
 
 def fix_single_file(filepath: str, config_file: str) -> Tuple[str, Dict, int]:
@@ -217,6 +236,18 @@ def fix_single_file(filepath: str, config_file: str) -> Tuple[str, Dict, int]:
     if check_balance is None:
         check_balance = False
 
+    attempt_limit = config.get_llm_param('attempt_limit')
+    if attempt_limit is None:
+        attempt_limit = 5
+    else:
+        attempt_limit = int(attempt_limit)
+
+    attempt_sleep_second = config.get_llm_param('attempt_sleep_second')
+    if attempt_sleep_second is None:
+        attempt_sleep_second = 5
+    else:
+        attempt_sleep_second = int(attempt_sleep_second)
+
     out_meta = {
         "model": model_name,
         "chunk_size": llm_chunk_size,
@@ -251,6 +282,7 @@ def fix_single_file(filepath: str, config_file: str) -> Tuple[str, Dict, int]:
             return "", out_meta, 0
 
         resp_contents = []
+        is_success = False
 
         chunks = chunk_token_with_langchain(file_content, llm_chunk_size, tokens_model)
 
@@ -264,21 +296,31 @@ def fix_single_file(filepath: str, config_file: str) -> Tuple[str, Dict, int]:
             log_info = f"   start {start_time.strftime('%Y-%m-%d %H:%M:%S')} LLM request: {idx + 1}/{len(chunks)}"
             print(log_info)
             logger.info(log_info)
+            resp_content, status_code = request_openai_api(model_url, api_key, model_name, llm_temperature, llm_top_p, llm_max_tokens, chunk, attempt_limit, attempt_sleep_second)
 
-            resp_content = request_openai_api(model_url, api_key, model_name, llm_temperature, llm_top_p, llm_max_tokens, chunk)
-            resp_contents.append(resp_content)
+            if status_code == 1:
+                resp_contents.append(resp_content)
 
-            end_time = datetime.now()
-            # 计算实际执行的时间
-            execution_time = end_time - start_time
-            execution_seconds = execution_time.total_seconds()
+                end_time = datetime.now()
+                # 计算实际执行的时间
+                execution_time = end_time - start_time
+                execution_seconds = execution_time.total_seconds()
 
-            log_info = f"   finish {end_time.strftime('%Y-%m-%d %H:%M:%S')} LLM request: {idx + 1}/{len(chunks)}, execution time {int(execution_seconds)}sec"
-            print(log_info)
-            logger.info(log_info)
-        out_meta["chunk_num"] = len(chunks)
-        out_meta["fix_stats"] = "success"
-        return "".join(resp_contents), out_meta, 1
+                log_info = f"   finish {end_time.strftime('%Y-%m-%d %H:%M:%S')} LLM request: {idx + 1}/{len(chunks)}, execution time {int(execution_seconds)}sec"
+                print(log_info)
+                logger.info(log_info)
+                is_success = True
+            else:
+                is_success = False
+                break
+
+        if is_success:
+            out_meta["chunk_num"] = len(chunks)
+            out_meta["fix_stats"] = "success"
+            return "".join(resp_contents), out_meta, 1
+        else:
+            out_meta["convert_stats"] = "fail"
+            return "", out_meta, 0
     except Exception as e:
         out_meta["fix_stats"] = "fail"
         log_info = f"Error fixing {filepath}: {e}"

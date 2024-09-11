@@ -161,7 +161,7 @@ def convert_pdf_to_images(input_pdf_file_path: str, max_pixels: int, max_pages: 
     logger.info(log_info)
     return images
 
-def request_openai_api(model_url, api_key, model_name, llm_temperature, llm_top_p, llm_max_tokens, scanned_idx, scanned_image) -> Tuple[str, int]:
+def request_openai_api(model_url, api_key, model_name, llm_temperature, llm_top_p, llm_max_tokens, scanned_idx, scanned_image, attempt_limit: int, attempt_sleep_second: int) -> Tuple[str, int]:
 
     image_format, image_base64 = image_to_base64(scanned_image)
 
@@ -211,18 +211,16 @@ def request_openai_api(model_url, api_key, model_name, llm_temperature, llm_top_
         params["top_p"] = llm_top_p
 
     # 发送请求，如果不成功停止5秒后重发，重复3次
-    attempts = 3
-    sleep_sec = 5
-    for attempt in range(attempts):
+    for attempt in range(attempt_limit):
         try:
             completion = openai.chat.completions.create(**params)
             return completion.choices[0].message.content, 1
         except BadRequestError as e:
             if e.code == 'RequestTimeOut':
-                log_info = f"Attempt {attempt + 1}/{attempts}: Request timed out. Retrying in {sleep_sec} seconds..."
+                log_info = f"Attempt {attempt + 1}/{attempt_limit}: Request timed out. Retrying in {attempt_sleep_second} seconds..."
                 print(log_info)
                 logger.error(log_info)
-                time.sleep(sleep_sec)
+                time.sleep(attempt_sleep_second)
             else:
                 log_info = f"Error Converting: {e}"
                 print(log_info)
@@ -341,17 +339,29 @@ def convert_single_file(filepath: str, config_file: str, is_image_save: bool, ma
     else:
         llm_top_p = float(llm_top_p)
 
-    llm_max_tokens= config.get_vlm_param('max_tokens')
+    llm_max_tokens = config.get_vlm_param('max_tokens')
     if llm_max_tokens is None:
         llm_max_tokens = 0
     else:
         llm_max_tokens = int(llm_max_tokens)
 
-    llm_max_pixels= config.get_vlm_param('max_pixels')
+    llm_max_pixels = config.get_vlm_param('max_pixels')
     if llm_max_pixels is None:
         llm_max_pixels = 1120
     else:
         llm_max_pixels = int(llm_max_pixels)
+
+    attempt_limit = config.get_vlm_param('attempt_limit')
+    if attempt_limit is None:
+        attempt_limit = 5
+    else:
+        attempt_limit = int(attempt_limit)
+
+    attempt_sleep_second = config.get_vlm_param('attempt_sleep_second')
+    if attempt_sleep_second is None:
+        attempt_sleep_second = 5
+    else:
+        attempt_sleep_second = int(attempt_sleep_second)
 
     scanned_images = convert_pdf_to_images(filepath, llm_max_pixels, max_pages=max_pages)
 
@@ -385,7 +395,7 @@ def convert_single_file(filepath: str, config_file: str, is_image_save: bool, ma
             resp_content = ''
             status_code = 0
             if model_type == 'net':
-                resp_content, status_code = request_openai_api(model_url, api_key, model_name, llm_temperature, llm_top_p, llm_max_tokens, idx, scanned_image)
+                resp_content, status_code = request_openai_api(model_url, api_key, model_name, llm_temperature, llm_top_p, llm_max_tokens, idx, scanned_image, attempt_limit, attempt_sleep_second)
             elif model_type == 'local':
                 resp_content, status_code = request_local_llm(model, processor, llm_temperature, llm_top_p, llm_max_tokens, idx, scanned_image)
 
