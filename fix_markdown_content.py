@@ -152,8 +152,6 @@ def request_openai_api(model_url, api_key, model_name, llm_temperature: float, l
         params["temperature"] = llm_temperature
     if llm_top_p not in [None, 0]:
         params["top_p"] = llm_top_p
-    if llm_max_tokens not in [None, 0]:
-        params["max_tokens"] = llm_max_tokens
 
     # create a chat completion
     completion = openai.chat.completions.create(**params)

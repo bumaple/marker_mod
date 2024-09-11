@@ -1,5 +1,6 @@
 import os
 import argparse
+import time
 import traceback
 import json
 
@@ -14,21 +15,24 @@ from marker.output import save_markdown
 from marker.config_read import Config
 
 from pdf2image import convert_from_path
-from PIL import Image, ImageChops
+from PIL import Image
 import cv2
 import base64
 from io import BytesIO
 import numpy as np
 
 import openai
+from openai import APIError, APITimeoutError, BadRequestError
 
-from transformers import Qwen2VLForConditionalGeneration, AutoTokenizer, AutoProcessor, GenerationConfig
+from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 from qwen_vl_utils import process_vision_info
 
 logger = setup_logger()
 
 
 def replace_string(replace_str: str, str_list: list):
+    if replace_str is None or replace_str == '':
+        return replace_str
     for str_val in str_list:
         replace_str = replace_str.replace(str_val, '')
     return replace_str
@@ -157,11 +161,12 @@ def convert_pdf_to_images(input_pdf_file_path: str, max_pixels: int, max_pages: 
     logger.info(log_info)
     return images
 
-def request_openai_api(model_url, api_key, model_name, llm_temperature, llm_top_p, llm_max_tokens, scanned_idx, scanned_image):
-    openai.api_key = api_key
-    openai.base_url = model_url
+def request_openai_api(model_url, api_key, model_name, llm_temperature, llm_top_p, llm_max_tokens, scanned_idx, scanned_image) -> Tuple[str, int]:
 
     image_format, image_base64 = image_to_base64(scanned_image)
+
+    openai.api_key = api_key
+    openai.base_url = model_url
 
     prompt_head = "你是Markdown文件的处理专家，识别图片中的内容转化为Markdown文本。请遵循以下要求：\n" + \
                   "1.不添加原文中不存在的任何信息；\n" + \
@@ -180,17 +185,16 @@ def request_openai_api(model_url, api_key, model_name, llm_temperature, llm_top_
                     "类似A.1.1.1、A.2.1.2、B.1.3.2、B.2.2.4、C.1.2.3、C.2.4.1等由英文字母和三组数值和三个.组成的编号的标注为#####五级标题，" + \
                     "类似1.1.1.1.1、1.2.1.1.2、2.2.1.1.3、2.2.1.2.5等由五组数字和四个.组成的编号标注为######六级标题，" + \
                     "类似A.1.1.1.1、A.2.1.2.3、B.1.3.2.5、B.2.2.4.4、C.1.2.3.2、C.2.4.1.3等由英文字母和四组数值和四个.组成的编号的标注为######六级标题；" + \
-                  "6.保持原始结构的完整性，标题及所包含的编号需要保持单独一行；\n" + \
+                  "6.保持原始结构的完整性，标题及所包含的编号需要单独一行；\n" + \
                   "7.删除页面下方的页码，删除句子或段落中的不必要换行，删除文本中不必要的空格，删除江西省标准化研究院字样的灰色水印；\n" + \
                   "8.文本中的数学、化学公式等LaTex公式修改为完整正确的Markdown公式，公式和其他文本在一行用$公式内容$进行标记，公式单独为一行用$$公式内容$$进行标记；\n" + \
                   "9.文本中的Markdown格式表格替换为Markdown格式中使用的html表格形式；\n" + \
                   f"10.省略无法识别成文字的部分，用图片格式进行标记，图片路径按照顺序用image_{str(scanned_idx).zfill(2)}_01.{image_format}、image_{str(scanned_idx).zfill(2)}_02.{image_format}的形式进行标记；\n" + \
                   "11.只回复符合格式要求的文本，不添加任何引言、解释或元数据。\n"
 
-    # create a chat completion
-    completion = openai.chat.completions.create(
-        model=model_name,
-        messages=[{"role": "user", "content": [
+    params = {
+        "model": model_name,
+        "messages": [{"role": "user", "content": [
                 {"type": "text", "text": f"{prompt_head}"},
                 {
                     "type": "image_url",
@@ -199,12 +203,36 @@ def request_openai_api(model_url, api_key, model_name, llm_temperature, llm_top_
                     },
                 },
             ]}],
-        # temperature=llm_temperature,
-        # top_p=llm_top_p,
-        max_tokens=llm_max_tokens
-    )
+        "max_tokens": llm_max_tokens
+    }
+    if llm_temperature not in [None, 0]:
+        params["temperature"] = llm_temperature
+    if llm_top_p not in [None, 0]:
+        params["top_p"] = llm_top_p
 
-    return completion.choices[0].message.content
+    # 发送请求，如果不成功停止5秒后重发，重复3次
+    attempts = 3
+    sleep_sec = 5
+    for attempt in range(attempts):
+        try:
+            completion = openai.chat.completions.create(**params)
+            return completion.choices[0].message.content, 1
+        except BadRequestError as e:
+            if e.code == 'RequestTimeOut':
+                log_info = f"Attempt {attempt + 1}/{attempts}: Request timed out. Retrying in {sleep_sec} seconds..."
+                print(log_info)
+                logger.error(log_info)
+                time.sleep(sleep_sec)
+            else:
+                log_info = f"Error Converting: {e}"
+                print(log_info)
+                logger.error(log_info)
+                return '', 0
+        except Exception as e:
+            log_info = f"Error Converting: {e}"
+            print(log_info)
+            logger.error(log_info)
+            return '', 0
 
 def init_local_llm(model_path):
     # We recommend enabling flash_attention_2 for better acceleration and memory saving, especially in multi-image and video scenarios.
@@ -228,7 +256,7 @@ def init_local_llm(model_path):
     return model, processor
 
 
-def request_local_llm(model, processor, llm_temperature, llm_top_p, llm_max_tokens, scanned_image_idx, scanned_image):
+def request_local_llm(model, processor, llm_temperature, llm_top_p, llm_max_tokens, scanned_image_idx, scanned_image) -> Tuple[str, int]:
 
     image_format, image_base64 = image_to_base64(scanned_image)
     prompt_head = "你是Markdown文件的处理专家，识别图片中的文本转化为Markdown文本格式，确保内容与前文连贯。请遵循以下要求：\n" + \
@@ -275,10 +303,10 @@ def request_local_llm(model, processor, llm_temperature, llm_top_p, llm_max_toke
     output_text = processor.batch_decode(
         generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
     )
-    return "".join(output_text)
+    return "".join(output_text), 1
 
 
-def convert_single_file(filepath: str, config_file: str, is_image_save: bool) -> Tuple[str, Dict, Dict[str, Image.Image]]:
+def convert_single_file(filepath: str, config_file: str, is_image_save: bool, max_pages: int) -> Tuple[str, Dict, Dict[str, Image.Image]]:
     config = Config(config_file)
 
     model_name = config.get_vlm_param('model')
@@ -303,19 +331,19 @@ def convert_single_file(filepath: str, config_file: str, is_image_save: bool) ->
 
     llm_temperature = config.get_vlm_param('temperature')
     if llm_temperature is None:
-        llm_temperature = 0.9
+        llm_temperature = 0
     else:
         llm_temperature = float(llm_temperature)
 
     llm_top_p = config.get_vlm_param('top_p')
     if llm_top_p is None:
-        llm_top_p = 0.8
+        llm_top_p = 0
     else:
         llm_top_p = float(llm_top_p)
 
     llm_max_tokens= config.get_vlm_param('max_tokens')
     if llm_max_tokens is None:
-        llm_max_tokens = 4096
+        llm_max_tokens = 0
     else:
         llm_max_tokens = int(llm_max_tokens)
 
@@ -325,17 +353,21 @@ def convert_single_file(filepath: str, config_file: str, is_image_save: bool) ->
     else:
         llm_max_pixels = int(llm_max_pixels)
 
-    scanned_images = convert_pdf_to_images(filepath, llm_max_pixels)
+    scanned_images = convert_pdf_to_images(filepath, llm_max_pixels, max_pages=max_pages)
 
     out_meta = {
         "model": model_name,
-        # "temperature": llm_temperature,
-        # "top_p": llm_top_p,
         "model_type": model_type,
-        # "max_tokens": llm_max_tokens,
         "max_pixels": llm_max_pixels,
         "image_size": len(scanned_images)
     }
+
+    if llm_temperature not in [None, 0]:
+        out_meta["temperature"] = llm_temperature
+    if llm_top_p not in [None, 0]:
+        out_meta["top_p"] = llm_top_p
+    if llm_max_tokens not in [None, 0]:
+        out_meta["max_tokens"] = llm_max_tokens
 
     # return "", out_meta 测试用
 
@@ -346,35 +378,46 @@ def convert_single_file(filepath: str, config_file: str, is_image_save: bool) ->
 
     try:
         resp_contents = []
+        is_success = False
         for idx, scanned_image in enumerate(scanned_images):
             start_time = datetime.now()
 
             resp_content = ''
+            status_code = 0
             if model_type == 'net':
-                resp_content = request_openai_api(model_url, api_key, model_name, llm_temperature, llm_top_p, llm_max_tokens, idx, scanned_image)
+                resp_content, status_code = request_openai_api(model_url, api_key, model_name, llm_temperature, llm_top_p, llm_max_tokens, idx, scanned_image)
             elif model_type == 'local':
-                resp_content = request_local_llm(model, processor, llm_temperature, llm_top_p, llm_max_tokens, idx, scanned_image)
+                resp_content, status_code = request_local_llm(model, processor, llm_temperature, llm_top_p, llm_max_tokens, idx, scanned_image)
 
-            # 处理多余的Markdown标记
-            replace_strs = ['``` ```markdown', '``````markdown', '```markdown', '```']
-            resp_content = replace_string(resp_content, replace_strs)
-            resp_contents.append(resp_content)
+            if status_code == 1:
+                # 处理多余的Markdown标记
+                replace_strs = ['``` ```markdown', '``````markdown', '```markdown', '```']
+                resp_content = replace_string(resp_content, replace_strs)
+                resp_contents.append(resp_content)
 
-            end_time = datetime.now()
-            # 计算实际执行的时间
-            execution_time = end_time - start_time
-            execution_seconds = execution_time.total_seconds()
+                end_time = datetime.now()
+                # 计算实际执行的时间
+                execution_time = end_time - start_time
+                execution_seconds = execution_time.total_seconds()
 
-            log_info = f"   {start_time.strftime('%Y-%m-%d %H:%M:%S')} LLM request: {idx + 1}/{len(scanned_images)}, execution time {int(execution_seconds)}sec {filepath}"
-            print(log_info)
-            logger.info(log_info)
+                log_info = f"   {start_time.strftime('%Y-%m-%d %H:%M:%S')} LLM request: {idx + 1}/{len(scanned_images)}, execution time {int(execution_seconds)}sec {filepath}"
+                print(log_info)
+                logger.info(log_info)
+                is_success = True
+            else:
+                is_success = False
+                break
 
-        out_meta["convert_stats"] = "success"
-        if is_image_save:
-            image_dict = images_to_dict(scanned_images)
+        if is_success:
+            out_meta["convert_stats"] = "success"
+            if is_image_save:
+                image_dict = images_to_dict(scanned_images)
+            else:
+                image_dict = {}
+            return "".join(resp_contents), out_meta, image_dict
         else:
-            image_dict = {}
-        return "".join(resp_contents), out_meta, image_dict
+            out_meta["convert_stats"] = "fail"
+            return "", out_meta, {}
     except Exception as e:
         out_meta["fix_stats"] = "fail"
         log_info = f"Error Converting {filepath}: {e}"
@@ -384,7 +427,7 @@ def convert_single_file(filepath: str, config_file: str, is_image_save: bool) ->
         return "", out_meta, {}
 
 
-def process_single_pdf(files_number, idx, filepath, out_folder, metadata, config_file, is_image_save, ocr_type, fix_ocr_type):
+def process_single_pdf(files_number, idx, filepath, out_folder, metadata, config_file, is_image_save, ocr_type, max_pages):
     fname = os.path.basename(filepath)
     if not os.path.exists(filepath):
         log_info = f"File not exist: {filepath}."
@@ -393,7 +436,7 @@ def process_single_pdf(files_number, idx, filepath, out_folder, metadata, config
         return
 
     try:
-        full_text, out_metadata, scanned_images = convert_single_file(filepath, config_file, is_image_save)
+        full_text, out_metadata, scanned_images = convert_single_file(filepath, config_file, is_image_save, max_pages)
         if len(full_text.strip()) > 0:
             record_id = None
             title = ''
@@ -412,22 +455,10 @@ def process_single_pdf(files_number, idx, filepath, out_folder, metadata, config
             if data_type == 'db':
                 if record_id is not None:
                     pdf_data_opt = PDFDataOperator(config_file)
-                    # 修改OCT_TYPE标志最后一个字符为1，表示完成修正
-                    # modified_ocr_type = '31'
-                    # modified_ocr_type = ocr_type[:-1] + '1'
-                    # pdf_data_opt.update_sub_finish_fix(record_id, modified_string, md_path, md_filename)
+
                     record_num = pdf_data_opt.get_sub_record_number(record_id)
                     sub_record_id = record_id + '_' + str(int(record_num) + 1).zfill(3)
                     pdf_data_opt.insert_sub_finish_ocr(record_id, sub_record_id, ocr_type, title, md_path, md_filename)
-
-                    # 查找子表MD文件都完成修正后，更新主表finish_ocr标志为9 识别结束
-                    # ready_fix_num = pdf_data_opt.get_sub_finish_ocr_number(record_id, {ocr_type})
-                    # finish_fix_num = pdf_data_opt.get_sub_finish_ocr_number(record_id, {fix_ocr_type})
-                    # if finish_fix_num == ready_fix_num:
-                    #     pdf_data_opt.update_pri_finish_orc(record_id, 9)
-                    #     log_info = f" * * * * * Converted Success! {record_id} {fname}"
-                    #     print(log_info)
-                    #     logger.error(log_info)
 
                     md_fullname = os.path.join(md_path, md_filename)
                     # 计算百分比
@@ -461,6 +492,7 @@ def main():
     parser.add_argument("--in_folder", help="Input folder with files.")
     parser.add_argument("--out_folder", help="Output folder with files.")
     parser.add_argument("--max", type=int, default=0, help="Maximum number of files to fix")
+    parser.add_argument("--max_pages", type=int, default=0, help="Maximum pages of files to fix")
     parser.add_argument("--metadata_file", type=str, default=None, help="Metadata json file to use for filtering")
     # 增加读取配置文件中数据库信息，通过数据库记录形式取代通过meta_file方式操作多文件 2024-08-13
     parser.add_argument("--data_type", default='db', help="data source type (db or path)")
@@ -480,7 +512,7 @@ def main():
     config_file = args.config_file
     save_image = args.save_image
     ocr_type = args.ocr_type
-    fix_ocr_type = ocr_type[:-1] + '1'
+    max_pages = args.max_pages
 
     if args.run_type == 'convert':
         metadata = {}
@@ -504,7 +536,7 @@ def main():
                 row_out_folder = os.path.dirname(pdf_file)
                 os.makedirs(row_out_folder, exist_ok=True)
                 if file_name.endswith('.pdf'):
-                    metadata[pdf_file] = {"languages": ["Chinese", "English"], "out_path": out_folder,
+                    metadata[pdf_file] = {"languages": ["Chinese", "English"], "out_path": row_out_folder,
                                           "record_id": record_id, "title": pdf_title, "data_type": data_type}
                     if os.path.isfile(pdf_file):
                         files.append(pdf_file)
@@ -560,7 +592,7 @@ def main():
         logger.info(log_info)
 
         for idx, file in enumerate(files_to_convert):
-            process_single_pdf(files_number, idx, file, out_folder, metadata.get(file), config_file, save_image, ocr_type, fix_ocr_type)
+            process_single_pdf(files_number, idx, file, out_folder, metadata.get(file), config_file, save_image, ocr_type, max_pages)
 
         end_time = datetime.now()
         # 计算实际执行的时间
