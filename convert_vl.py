@@ -530,7 +530,7 @@ def main():
         out_folder = None
         if data_type == 'db':
             pdf_data_opt = PDFDataOperator(config_file)
-            records = pdf_data_opt.query_need_ocr(ocr_type, args.max)
+            records = pdf_data_opt.query_need_ocr_v1(ocr_type, args.max)
             if len(records) <= 0:
                 log_info = f"Error No data needs to be processed!"
                 print(log_info)

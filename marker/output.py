@@ -5,6 +5,9 @@ import json
 import shutil
 
 from datetime import datetime
+from typing import Tuple
+
+
 # 增加 2024-08-13 end
 
 
@@ -44,8 +47,8 @@ def save_markdown(out_folder, fname, full_text, images, out_metadata, ocr_type):
 
     with open(markdown_filepath, "w+", encoding='utf-8') as f:
         f.write(full_text)
-    with open(out_meta_filepath, "w+") as f:
-        f.write(json.dumps(out_metadata, indent=4))
+    with open(out_meta_filepath, "w+", encoding='utf-8') as f:
+        f.write(json.dumps(out_metadata, ensure_ascii=False, indent=4))
 
     for filename, image in images.items():
         image_filepath = os.path.join(subfolder_path, filename)
@@ -63,8 +66,8 @@ def save_markdown_fix(out_folder, fname, full_text, out_metadata, ocr_type):
 
     with open(markdown_filepath, "w+", encoding='utf-8') as f:
         f.write(full_text)
-    with open(out_meta_filepath, "w+") as f:
-        f.write(json.dumps(out_metadata, indent=4))
+    with open(out_meta_filepath, "w+", encoding='utf-8') as f:
+        f.write(json.dumps(out_metadata, ensure_ascii=False, indent=4))
 
     copy_files(out_folder, subfolder_path)
 
@@ -119,3 +122,26 @@ def copy_files(source_dir, target_dir, exclude_extensions=None):
                     target_file = os.path.join(target_sub_dir, file)
                     # 复制文件
                     shutil.copy2(source_file, target_file)
+
+
+def get_html_filepath(out_folder, fname, ocr_type, subfolder_path: str = None) -> Tuple[str, str]:
+    if subfolder_path is None:
+        subfolder_path = get_subfolder_path(out_folder, fname, ocr_type)
+    os.makedirs(subfolder_path, exist_ok=True)
+    out_filename = fname.rsplit(".", 1)[0] + ".html"
+    out_filename = os.path.join(subfolder_path, out_filename)
+    return subfolder_path, out_filename
+
+
+def save_html(out_folder, fname, full_text, out_metadata, ocr_type, subfolder_path: str = None) -> Tuple[str, str, str]:
+    # 修改 2024-08-29 begin
+    subfolder_path, html_filepath = get_html_filepath(out_folder, fname, ocr_type, subfolder_path)
+    # 修改 2024-08-29 end
+    out_meta_filepath = html_filepath.rsplit(".", 1)[0] + "_meta.json"
+
+    with open(html_filepath, "w", encoding='utf-8') as f:
+        f.write(full_text)
+    with open(out_meta_filepath, "w", encoding='utf-8') as f:
+        f.write(json.dumps(out_metadata, ensure_ascii=False, indent=4))
+
+    return subfolder_path, html_filepath, out_meta_filepath

@@ -6,6 +6,8 @@ from flask import Flask, request, json
 from marker.logger import setup_logger
 from marker.config_read import Config
 
+from convert_word import *
+
 app = Flask(__name__)
 
 logger = setup_logger()
@@ -169,6 +171,57 @@ def fix_table_markdown():
             response=json.dumps(response, ensure_ascii=False),
             mimetype='application/json'
         )
+
+
+@app.route('/convert_docx', methods=['POST'])
+def convert_docx():
+    req_data = request.get_json()
+
+    is_success = False
+
+    if not req_data or 'in_file' not in req_data:
+        response = {
+            "is_success": is_success,
+            "content": "'in_file' parameter is required"
+        }
+        return app.response_class(
+            response=json.dumps(response, ensure_ascii=False),
+            mimetype='application/json',
+        )
+
+    in_file = req_data['in_file']
+
+    data_source = 'path'
+    metadata_list = {}
+
+    if in_file.endswith('.docx'):
+        if os.path.isfile(in_file):
+            files = [in_file]
+            for file in files:
+                file_name = os.path.basename(file)
+                metadata_list[file_name] = {"in_file": in_file}
+
+            result_code, result_msg, out_file_data = convert_handler(None, data_source, 0, metadata_list,
+                                      files)
+            if result_code == 1:
+                is_success = True
+                resp_content = out_file_data
+            else:
+                is_success = False
+                resp_content = result_msg
+        else:
+            resp_content = f"文件不存在！{in_file}"
+    else:
+        resp_content = f"仅支持docx文件类型！{in_file}"
+
+    response = {
+        "is_success": is_success,
+        "content": resp_content
+    }
+    return app.response_class(
+        response=json.dumps(response, ensure_ascii=False),
+        mimetype='application/json'
+    )
 
 
 if __name__ == '__main__':

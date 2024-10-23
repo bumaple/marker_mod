@@ -4,6 +4,7 @@ os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1" # For some reason, transformers 
 
 from marker.postprocessors.editor import load_editing_model
 from surya.model.detection.model import load_model as load_detection_model, load_processor as load_detection_processor
+# from surya.model.detection.segformer import load_model as load_detection_model, load_processor as load_detection_processor
 from texify.model.model import load_model as load_texify_model
 from texify.model.processor import load_processor as load_texify_processor
 from marker.settings import settings
