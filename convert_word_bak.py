@@ -13,7 +13,7 @@ from loguru import logger
 from marker.database.pdf_data_operator import PDFDataOperator
 from marker.logger import set_logru
 from marker.config_read import Config
-from marker.output import save_html_markdown_json, get_subfolder_path
+from marker.output import save_html, get_subfolder_path
 from marker.docx.data.docx_content_data import DocxData, DocxChapterData, DocxParagraphData
 
 from docx import Document
@@ -48,8 +48,8 @@ def find_image_rids_in_paragraph(paragraph):
         if not hasattr(run, '_element'):
             continue
         drawings = run.element.findall('.//wp:inline//a:blip',
-                                       {'wp': 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing',
-                                        'a': 'http://schemas.openxmlformats.org/drawingml/2006/main'})
+                                        {'wp': 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing',
+                                         'a': 'http://schemas.openxmlformats.org/drawingml/2006/main'})
         if drawings is None:
             continue
         for drawing in drawings:
@@ -92,25 +92,36 @@ def extract_images(doc, output_folder):
 
 STANDALONE_NUMBER_PATTERNS = [
     # r'^[A-Za-z](\.\d+)*\.$',  # 字母数字组合带点: A.1., A.1.1.
-    (r'^[A-Za-z](\.\d+)+$', 0),  # 字母数字组合: A.1, A.1.1
+    r'^[A-Za-z](\.\d+)+$',  # 字母数字组合: A.1, A.1.1
     # r'^[A-Za-z]\.$',  # 带点的字母: A., B., C.
-    (r'^[A-Za-z]$', 0),  # 单个字母: A, B, C
+    r'^[A-Za-z]$',  # 单个字母: A, B, C
     # r'^\d+(\.\d+)*\.$',  # 多级数字带点: 1.1., 1.1.1.
-    (r'^\d+(\.\d+)+$', 0),  # 多级数字: 1.1, 1.1.1
+    r'^\d+(\.\d+)+$',  # 多级数字: 1.1, 1.1.1
     # r'^\d+\.$',  # 带点的数字: 1., 2., 3.
-    (r'^\d+$', 0),  # 纯数字: 1, 2, 3
+    r'^\d+$',  # 纯数字: 1, 2, 3
+]
+
+ENDS_WITH_NUMBER_PATTERNS = [
+    # r'(?<=\s|\。)([A-Za-z](\.\d+)*\.)$',  # 单个字母数字组合带点: A.1., A.1.1.
+    r'(?<=\s|\。)([A-Za-z](\.\d+)+)$',  # 单个字母数字组合: A.1, A.1.1
+    # r'(?<=\s|\。)([A-Za-z]\.)$',  # 单个字母带点: A., B., C.
+    r'(?<=\s|\。)([A-Za-z])$',  # 单个字母: A, B, C
+    # r'(?<=\s|\。)(\d+(\.\d+)*\.)$',  # 多级数字带点: 1.1., 1.1.1.
+    r'(?<=\s|\。)(\d+(\.\d+)+)$',  # 多级数字: 1.1, 1.1.1
+    # r'(?<=\s|\。)(\d+\.)$',  # 带点的数字: 1., 2., 3.
+    r'(?<=\s|\。)(\d+)$',  # 纯数字: 1, 2, 3
 ]
 
 NUMBERING_PATTERNS = [
     # r'(?<!\S)[A-Z](?:\.\d+)+\.\s',  # 1. 单个字母数字组合带点: A.1., A.1.1.
-    (r'(?<!\S)[A-Z](?:\.\d+)+\s', 0),  # 2. 单个字母数字组合: A.1, A.1.1
+    r'(?<!\S)[A-Z](?:\.\d+)+\s',  # 2. 单个字母数字组合: A.1, A.1.1
     # r'(?<!\S)[A-Z]\.\s',  # 3. 单个字母带点: A., B., C.
-    (r'(?<!\S)附\s?录\s?[A-Z](?!\S)', 2),  # 4. 附录带单个字母组合: 附录A, 附录B, 附录C
+    r'(?<!\S)附\s?录\s?[A-Z](?!\S)',  # 4. 附录带单个字母组合: 附录A, 附录B, 附录C
     # r'(?<!\S)\d+(?:\.\d+)+\.\s',  # 5. 多级数字带点: 1.1., 1.1.1.
-    (r'(?<!\S)\d+(?:\.\d+)+\s', 0),  # 6. 多级数字: 1.1, 1.1.1
+    r'(?<!\S)\d+(?:\.\d+)+\s',  # 6. 多级数字: 1.1, 1.1.1
     # r'(?<!\S)\d+\.\s',  # 7. 带点的数字: 1., 2., 3.
-    (r'(?<!\S)\d+(?!\S)', 0),  # 8. 纯数字: 1, 2, 3
-    (r'(?<!\S)前\s?言(?!\S)', 1),  # 9. 特殊章节: 前言, 前 言
+    r'(?<!\S)\d+(?!\S)',  # 8. 纯数字: 1, 2, 3
+    r'(?<!\S)前\s?言(?!\S)',  # 9. 特殊章节: 前言, 前 言
 ]
 
 REPLACE_PATTERNS = [
@@ -141,12 +152,31 @@ REPLACE_PATTERNS = [
     # 替换破折号为连字符
     (r'—', '-'),
     # 替换连续多个空格为单个空格
-    (r'\s{2,}', ' '),
-    # 特殊文本: 表 1
-    (r'表\s*(\d+)', r'表\1.'),
-    # 特殊文本: 图 1
-    (r'图\s*(\d+)', r'图\1.'),
+    (r'\s{2,}', ' ')
 ]
+
+
+def ends_with_number(text: str) -> bool:
+    """检查文本是否以编号结束"""
+    text = text.strip()
+    # 检查是否有任何模式匹配文本的末尾
+    return any(re.search(pattern, text) for pattern in ENDS_WITH_NUMBER_PATTERNS)
+
+
+def extract_number_from_end(text: str) -> tuple:
+    """从文本末尾截取编号并返回移除编号后的文本和编号"""
+    text = text.strip()
+
+    # 依次匹配模式，截取编号
+    for pattern in ENDS_WITH_NUMBER_PATTERNS:
+        match = re.search(pattern, text)
+        if match:
+            number = match.group(0)
+            # 移除匹配到的编号并返回
+            new_text = text[:text.rfind(number)].strip()
+            return new_text, number
+
+    return text, None  # 如果没有找到编号，返回原文本和None
 
 
 def clean_text(text):
@@ -158,9 +188,11 @@ def clean_text(text):
     return text
 
 
-def remove_chinese(text):
-    pattern = re.compile(r'[\u4e00-\u9fa5]+')
-    return re.sub(pattern, '', text)
+def is_standalone_number(text):
+    """检查文本是否为独立的编号"""
+    # 移除所有空白字符
+    text = text.strip()
+    return any(re.match(pattern, text) for pattern in STANDALONE_NUMBER_PATTERNS)
 
 
 def is_chemical_formula(text):
@@ -421,63 +453,59 @@ def merge_tables(table1, table2):
     return base_table
 
 
-def get_heading_level(paragraph) -> Tuple[int, int]:
+def get_heading_level(paragraph):
     """
     检查段落是否是标题样式，如果是则返回标题级别（1-6），否则返回None
     """
     if not hasattr(paragraph, 'style') or not paragraph.style:
-        return 0, 0
+        return None
     style_name = paragraph.style.name.lower() if paragraph.style.name else ''
     if 'heading' in style_name or 'title' in style_name:
         match = re.search(r'\d+', style_name)
         if match:
             level = int(match.group())
-            return min(max(level, 1), 6), 0
+            return min(max(level, 1), 6)
         elif 'title' in style_name:
-            return 1, 0
-    return 0, 0
+            return 1
+    return 0
 
 
-def get_number_heading_level(text: str) -> Tuple[int, int]:
+def get_number_heading_level(text: str) -> int:
     """
     根据编号格式判断标题级别
     返回对应的标题级别（1-6），如果不是有效的编号格式则返回None
     """
     text = text.strip()
-    for pattern, level_flag in NUMBERING_PATTERNS:
+    for pattern in NUMBERING_PATTERNS:
         match = re.match(pattern, text)
         if match:
-            if level_flag != 0:
-                return 1, level_flag
             # 计算级别
             level = len(re.findall(r'\d+|\w', match.group()))
-            return min(level, 6), level_flag
-    for pattern, level_flag in STANDALONE_NUMBER_PATTERNS:
+            return min(level, 6)
+    for pattern in STANDALONE_NUMBER_PATTERNS:
         match = re.match(pattern, text)
         if match:
-            if level_flag != 0:
-                return 1, level_flag
             # 计算级别
             level = len(re.findall(r'\d+|\w', match.group()))
-            return min(level, 6), level_flag
-    return 0, 0
+            return min(level, 6)
+    return 0
 
 
-def get_combined_heading_level(paragraph, text) -> Tuple[int, int]:
+def get_combined_heading_level(paragraph, text):
     """
     综合考虑段落样式和编号格式来确定标题级别
     返回最终的标题级别（1-6）或 0
     """
-    style_level, style_level_flag = get_heading_level(paragraph)
-    number_level, number_level_flag = get_number_heading_level(text)
+    style_level = get_heading_level(paragraph)
+    number_level = get_number_heading_level(text)
 
     if style_level == 0 and number_level == 0:
-        return 0, 0
+        return 0
     if style_level == 0:
-        return number_level, number_level_flag
+        return number_level
     if number_level == 0:
-        return style_level, style_level_flag
-    return min(style_level, number_level), min(style_level_flag, number_level_flag)
+        return style_level
+    return min(style_level, number_level)
 
 
 def convert_table_to_html(table, image_map):
@@ -634,18 +662,38 @@ def convert_paragraph_to_html(paragraph, image_map):
             html.append(f'<img {" ".join(img_attrs)}>')
 
     header_level = 0
-    header_level_flag = 0
+    # pending_number = None
     text_content = clean_text(text_content)
     if len(text_content) > 0:
-        header_level, header_level_flag = get_combined_heading_level(paragraph, text_content)
+        # if is_number:
+            # 不再特殊处理独立编号
+            # if is_standalone_number(text_content):
+                # 该行是独立编号
+            #     pending_number = text_content
+            #     text_content = ''  # 移除编号
+            # 不再判断行尾是否是编号
+            # else:
+                # 检查段落末尾是否是编号，如果是，则移除编号
+                # last_word = text_content.split()[-1] if text_content else None
+                # if last_word:
+                #     if ends_with_number(last_word):
+                #         text, number = extract_number_from_end(last_word)
+                #         if number:
+                #             # 行尾有编号
+                #             pending_number = number  # 保存编号到下一行合并
+                #             text_content = text_content.rstrip(number).strip()  # 移除编号
+            # if input_pending_number:
+            #     text_content = input_pending_number + '&nbsp;' + text_content
+
+            header_level = get_combined_heading_level(paragraph, text_content)
 
     # 返回包含段落信息的字典
     return {
         'text': text_content,  # text_content 已经包含规范化的空格
         'has_images': has_images,
         'html': html,
-        'header_level': header_level,
-        'header_level_flag': header_level_flag,
+        # 'pending_number': pending_number,  # 返回用于下一段合并的编号
+        'header_level': header_level
     }
 
 
@@ -677,7 +725,7 @@ def process_doc_body(doc):
     return processed_items
 
 
-def convert_word_markdown_json(file_path, file_name, file_to_convert, metadata) -> Tuple[str, str, DocxData, int, Dict]:
+def convert_word_docx(file_path, file_name, file_to_convert, metadata) -> Tuple[str, int, Dict]:
     """将Word文档转换为HTML，处理编号合并逻辑和表格合并"""
     # 创建images文件夹
     images_dir = os.path.join(file_path, 'images')
@@ -698,95 +746,72 @@ def convert_word_markdown_json(file_path, file_name, file_to_convert, metadata) 
 <style>
 table { margin-bottom: 15px; border-collapse: collapse; width: 100%; }
 td { border: 0.5pt solid black; padding: 5px; vertical-align: top; }''',
-                    'p { margin: 10px 0; font-size: ' + str(HTML_FONT_SIZE_DEFAULT) + 'pt; }',
-                    '''img { max-width: 100%; height: auto; display: block; margin: 10px 0; }
-                    h1, h2, h3, h4, h5, h6 { margin: 20px 0 10px 0; font-weight: bold; }
-                    h1 { font-size: 14pt; }
-                    h2 { font-size: 12pt; }
-                    h3 { font-size: 12pt; }
-                    h4 { font-size: 12pt; }
-                    h5 { font-size: 12pt; }
-                    h6 { font-size: 12pt; }
-                    h1:not(:empty), h2:not(:empty), h3:not(:empty), h4:not(:empty), h5:not(:empty), h6:not(:empty) { padding-left: 10px; border-left: 4px solid #333; line-height: 1.4; }
-                    </style>
-                    </head>
-                    <body>''']
+'p { margin: 10px 0; font-size: ' + str(HTML_FONT_SIZE_DEFAULT) + 'pt; }',
+'''img { max-width: 100%; height: auto; display: block; margin: 10px 0; }
+h1, h2, h3, h4, h5, h6 { margin: 20px 0 10px 0; font-weight: bold; }
+h1 { font-size: 14pt; }
+h2 { font-size: 12pt; }
+h3 { font-size: 12pt; }
+h4 { font-size: 12pt; }
+h5 { font-size: 12pt; }
+h6 { font-size: 12pt; }
+h1:not(:empty), h2:not(:empty), h3:not(:empty), h4:not(:empty), h5:not(:empty), h6:not(:empty) { padding-left: 10px; border-left: 4px solid #333; line-height: 1.4; }
+</style>
+</head>
+<body>''']
 
-    markdown_content = []
+    # pending_number = None  # 存储待合并的编号
 
-    docx_data = DocxData(fileName=file_name)
+    docx_data = DocxData(fileName=file_name, filePath=file_path)
+
+    # structured_content = {"docx": {}}
+    # current_chapter = structured_content["docx"]
+    # chapter_stack = [current_chapter]
 
     # 处理文档主体，合并表格
     processed_items = process_doc_body(doc)
-
-    chapter_seq = 1
-    docx_chapter_data = DocxChapterData(sn='封面', title='', level=0, seq=chapter_seq)
-    docx_data.add_chapter(docx_chapter_data)
 
     for item_type, item in processed_items:
         if item_type == 'table':
             try:
                 convert_html = convert_table_to_html(item, image_map)
                 html_content.append(convert_html)
-                markdown_content.append(convert_html)
-
-                if len(convert_html) > 0:
-                    docx_paragraph_data = DocxParagraphData(convert_html)
-                    docx_chapter_data.add_paragraph(docx_paragraph_data)
             except Exception as e:
                 logger.error(f"表格处理错误: {e}")
-                return '', '', docx_data, 9, metadata
+                return '', 9, metadata
         else:
             if item.tag.endswith('p'):
                 paragraph = [p for p in doc.paragraphs if p._element == item][0]
                 para_info = convert_paragraph_to_html(paragraph, image_map)
+                # 标题编号
+                # pending_number = para_info['pending_number']
                 # 标题级别
                 header_level = para_info['header_level']
-                header_level_flag = para_info['header_level_flag']
+                # if pending_number:
+                #     if len(para_info['text']) > 0:
+                #         if header_level > 0:
+                #             html_content.append(f"<h{header_level}>{para_info['text']}</h{header_level}>")
+                #         else:
+                #             html_content.append(f"<p>{para_info['text']}</p>")
+                # else:
                 if para_info['text']:
                     if header_level > 0:
-                        # 获取章节编号
-                        title_content = ''.join(para_info['text'])
-                        title_list = title_content.split(" ")
-                        if len(title_list) > 0:
-                            sn_text = title_list[0].replace(' ', '')
-                        else:
-                            sn_text = title_content.replace(' ', '')
-                        title_full_content = sn_text
-                        title_text = ''
-                        if len(title_list) > 1:
-                            title_text = ''.join(title_list[1:])
-                            title_full_content += f" {title_text}"
-
-                        html_content.append(f"<h{header_level}>{title_full_content}</h{header_level}>")
-                        markdown_content.append(f"{header_level * '#'} {title_full_content}")
-
-                        if header_level_flag == 2:
-                            title_key = remove_chinese(sn_text)
-                        else:
-                            title_key = sn_text
-
-                        docx_chapter_data, chapter_seq = docx_data.find_chapter_by_key(key=title_key, sn=sn_text, title=title_text, level=header_level, seq=chapter_seq)
+                        html_content.append(f"<h{header_level}>{para_info['text']}</h{header_level}>")
                     else:
                         html_content.append(f'<p>{para_info["text"]}</p>')
-                        markdown_content.append(f'{para_info["text"]}')
-
-                        json_text = ''.join(para_info["text"])
-                        if len(json_text) > 0:
-                            docx_paragraph_data = DocxParagraphData(json_text)
-                            docx_chapter_data.add_paragraph(docx_paragraph_data)
                 if para_info['has_images']:
                     html_content.extend(para_info['html'])
-                    markdown_content.extend(para_info['html'])
 
-                    json_text = ''.join(para_info["html"])
-                    if len(json_text) > 0:
-                        docx_paragraph_data = DocxParagraphData(json_text)
-                        docx_chapter_data.add_paragraph(docx_paragraph_data)
+    # 如果最后还有未处理的编号，添加到最后
+    # if pending_number:
+    #     html_content.append(f'<p>{pending_number}</p>')
 
     html_content.append('</body>\n</html>')
 
-    return '\n'.join(html_content), '\n'.join(markdown_content), docx_data.to_json(), 1, metadata
+    # 将结构化内容添加到metadata中
+    # metadata['docx'] = docx_data
+
+    return '\n'.join(html_content), 1, metadata
 
 
 def convert_handler(pdf_data_opt, data_source, max_files, metadata_list, files) -> Tuple[int, str, list]:
@@ -802,6 +827,8 @@ def convert_handler(pdf_data_opt, data_source, max_files, metadata_list, files) 
         files_to_convert = files
 
     files_number = len(files_to_convert)
+    # log_info = f" * * * * * 待处理文件放入队列 文件数：{files_number}。开始时间：{start_time.strftime('%Y-%m-%d %H:%M:%S')}"
+    # logger.info(log_info)
 
     # 执行过程开始
     return_html_files = []
@@ -834,20 +861,11 @@ def convert_handler(pdf_data_opt, data_source, max_files, metadata_list, files) 
 
         subfolder_path = get_subfolder_path(out_folder, file_name, ocr_type_strs)
 
-        html_content, markdown_content, json_content, result_code, out_metadata = convert_word_markdown_json(
-            subfolder_path, file_name, file_to_convert, metadata)
+        html_content, result_code, out_metadata = convert_word_docx(subfolder_path, file_name, file_to_convert, metadata)
         if len(html_content) > 0:
-            html_path, html_file, markdown_file, json_file, metadata_file = save_html_markdown_json(out_folder,
-                                                                                                    file_name,
-                                                                                                    html_content,
-                                                                                                    markdown_content,
-                                                                                                    json_content,
-                                                                                                    out_metadata,
-                                                                                                    ocr_type_strs,
-                                                                                                    subfolder_path)
-            return_html_files.append(
-                {'path': html_path, 'html_file': html_file, 'markdown_file': markdown_file, 'json_file': json_file, 'metadata_file': metadata_file})
-            logger.debug(f"写入文件成功 第{idx + 1}个 文件名：{file_name} 保存路径：{html_path}")
+            html_path, html_file, html_json = save_html(out_folder, file_name, html_content, out_metadata, ocr_type_strs, subfolder_path)
+            return_html_files.append({'path': html_path, 'html_file': html_file, 'json_file': html_json})
+            logger.debug(f"写入Html文件成功 第{idx + 1}个 文件名：{file_name} 保存路径：{html_path}")
         else:
             if result_code == 9:
                 return 0, '表格格式错误', []
@@ -877,7 +895,7 @@ def get_data_from_db(pdf_data_opt, batch_number) -> Tuple[int, list, dict]:
     metadata_list = {}
     files = []
 
-    records = pdf_data_opt.query_need_docx(batch_number)
+    records = pdf_data_opt.query_need_ocr_v2(batch_number)
     if len(records) <= 0:
         log_info = f"没有需要处理的数据！"
         logger.info(log_info)
@@ -885,16 +903,19 @@ def get_data_from_db(pdf_data_opt, batch_number) -> Tuple[int, list, dict]:
     # 循环输出查询结果
     for row in records:
         record_id = row['ID']
-        word_file = row['WORD_FILE']
-        word_file_name = row['WORD_FILE_NAME']
-        word_title = row['TITLE']
-        file_name = os.path.basename(word_file)
-        out_folder = os.path.dirname(word_file)
+        pdf_file = row['PDF_FILE']
+        pdf_title = row['TITLE']
+        ocr_types = row['OCR_TYPES']
+        ocr_priority = row['OCR_PRIORITY']
+        file_name = os.path.basename(pdf_file)
+        out_folder = os.path.dirname(pdf_file)
+        # os.makedirs(out_folder, exist_ok=True)
         if file_name.endswith('.doc') or file_name.endswith('.docx'):
-            metadata_list[word_file_name] = {"out_path": out_folder,
-                                       "record_id": record_id, "title": word_title, "ocr_types": '00'}
-            if os.path.isfile(word_file):
-                files.append(word_file)
+            metadata_list[pdf_file] = {"out_path": out_folder,
+                                       "record_id": record_id, "title": pdf_title, "ocr_types": ocr_types,
+                                       "ocr_priority": ocr_priority}
+            if os.path.isfile(pdf_file):
+                files.append(pdf_file)
     return 1, files, metadata_list
 
 
@@ -951,7 +972,7 @@ def check_files_status(pdf_data_opt, max_files_arg) -> Tuple[int, list]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="转化docx文件为html及json.")
+    parser = argparse.ArgumentParser(description="Fix multiple markdown files by LLM.")
     parser.add_argument("--in_folder", help="Input folder with files.")
     parser.add_argument("--out_folder", help="Output folder with files.")
     parser.add_argument("--max", type=int, default=0, help="Maximum number of files to fix")
@@ -999,7 +1020,7 @@ def main():
                     return
 
                 result_code, result_msg, out_file = convert_handler(pdf_data_opt, data_source, max_files_arg,
-                                                                    metadata_list, files)
+                                              metadata_list, files)
                 if result_code == 0:
                     return
                 if len(files) == batch_number:
@@ -1013,7 +1034,7 @@ def main():
                 return
 
             result_code, result_msg, out_file = convert_handler(None, data_source, max_files_arg, metadata_list,
-                                                                files)
+                                          files)
             if result_code == 0:
                 return
         else:

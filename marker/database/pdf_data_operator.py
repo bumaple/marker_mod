@@ -13,10 +13,12 @@ class PDFDataOperator:
             # 测试表名
             self.table_name_pri_pdf = 't_pdf_info_copy1'
             self.table_name_sub_md = 't_pdf_md_info_copy1'
+            self.table_name_pri_docx = 't_word_info_copy1'
         else:
             # 正式表名
             self.table_name_pri_pdf = 't_pdf_info'
             self.table_name_sub_md = 't_pdf_md_info'
+            self.table_name_pri_docx = 't_word_info'
 
     def query_need_ocr_v1(self, ocr_type, max_record):
         try:
@@ -37,6 +39,22 @@ class PDFDataOperator:
     def query_need_ocr_v2(self, max_record):
         try:
             select_query = f"SELECT * FROM {self.table_name_pri_pdf} WHERE FINISH_OCR = %s AND DELETE_FLAG = '0' ORDER BY OCR_PRIORITY, CREATE_TIME"
+            if max_record > 0:
+                select_query = select_query + " LIMIT 0, %s"
+            self.db.connect()
+            if max_record > 0:
+                results = self.db.query(select_query, (0, max_record))
+            else:
+                results = self.db.query(select_query, (0,))
+            return results
+        except mysql.connector.Error as err:
+            print(f"Database Error: {err}")
+        finally:
+            self.db.close()
+
+    def query_need_docx(self, max_record):
+        try:
+            select_query = f"SELECT * FROM {self.table_name_pri_docx} WHERE CONFIRM = %s AND DELETE_FLAG = '0' ORDER BY CREATE_TIME"
             if max_record > 0:
                 select_query = select_query + " LIMIT 0, %s"
             self.db.connect()

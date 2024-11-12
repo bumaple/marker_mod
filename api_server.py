@@ -182,24 +182,24 @@ def convert_docx():
     if not req_data or 'in_file' not in req_data:
         response = {
             "is_success": is_success,
-            "content": "'in_file' parameter is required"
+            "content": "'in_file'参数不存在！"
         }
         return app.response_class(
             response=json.dumps(response, ensure_ascii=False),
             mimetype='application/json',
         )
 
-    in_file = req_data['in_file']
+    in_file_input = req_data['in_file']
 
     data_source = 'path'
     metadata_list = {}
 
-    if in_file.endswith('.docx'):
-        if os.path.isfile(in_file):
-            files = [in_file]
+    if in_file_input.endswith('.docx'):
+        if os.path.isfile(in_file_input):
+            files = [in_file_input]
             for file in files:
                 file_name = os.path.basename(file)
-                metadata_list[file_name] = {"in_file": in_file}
+                metadata_list[file_name] = {"in_file": in_file_input}
 
             result_code, result_msg, out_file_data = convert_handler(None, data_source, 0, metadata_list,
                                       files)
@@ -210,9 +210,9 @@ def convert_docx():
                 is_success = False
                 resp_content = result_msg
         else:
-            resp_content = f"文件不存在！{in_file}"
+            resp_content = f"文件不存在！{in_file_input}"
     else:
-        resp_content = f"仅支持docx文件类型！{in_file}"
+        resp_content = f"仅支持docx文件类型！{in_file_input}"
 
     response = {
         "is_success": is_success,

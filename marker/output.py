@@ -133,15 +133,19 @@ def get_html_filepath(out_folder, fname, ocr_type, subfolder_path: str = None) -
     return subfolder_path, out_filename
 
 
-def save_html(out_folder, fname, full_text, out_metadata, ocr_type, subfolder_path: str = None) -> Tuple[str, str, str]:
-    # 修改 2024-08-29 begin
+def save_html_markdown_json(out_folder, fname, html_text, markdown_text, json_text, out_metadata, ocr_type, subfolder_path: str = None) -> Tuple[str, str, str, str, str]:
     subfolder_path, html_filepath = get_html_filepath(out_folder, fname, ocr_type, subfolder_path)
-    # 修改 2024-08-29 end
+    markdown_filepath = html_filepath.rsplit(".", 1)[0] + ".md"
+    json_filepath = html_filepath.rsplit(".", 1)[0] + ".json"
     out_meta_filepath = html_filepath.rsplit(".", 1)[0] + "_meta.json"
 
     with open(html_filepath, "w", encoding='utf-8') as f:
-        f.write(full_text)
+        f.write(html_text)
+    with open(markdown_filepath, "w", encoding='utf-8') as f:
+        f.write(markdown_text)
+    with open(json_filepath, "w", encoding='utf-8') as f:
+        f.write(json.dumps(json_text, ensure_ascii=False, indent=4))
     with open(out_meta_filepath, "w", encoding='utf-8') as f:
         f.write(json.dumps(out_metadata, ensure_ascii=False, indent=4))
 
-    return subfolder_path, html_filepath, out_meta_filepath
+    return subfolder_path, html_filepath, markdown_filepath, json_filepath, out_meta_filepath
