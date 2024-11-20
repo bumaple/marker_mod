@@ -11,6 +11,7 @@ from typing import Dict, Tuple
 from loguru import logger
 
 from marker.database.pdf_data_operator import PDFDataOperator
+from marker.http.http_utils import HttpUtils
 from marker.logger import set_logru
 from marker.config_read import Config
 from marker.output import save_html_markdown_json, get_subfolder_path
@@ -20,8 +21,6 @@ from docx import Document
 from PIL import Image
 import hashlib
 import shutil
-
-set_logru()
 
 
 def get_image_dimensions(image_data):
@@ -258,7 +257,7 @@ def should_merge_tables(doc_body, current_index):
     return None
 
 
-def get_merged_cell_info(table):
+def get_merged_cell_info(table) -> dict:
     """获取表格中所有单元格的合并信息"""
     merged_cells = {}
     row_cells, col_cells = [], []
@@ -480,7 +479,7 @@ def get_combined_heading_level(paragraph, text) -> Tuple[int, int]:
     return min(style_level, number_level), min(style_level_flag, number_level_flag)
 
 
-def convert_table_to_html(table, image_map):
+def convert_table_to_html(table, image_map, is_styled=True) -> Tuple[str, dict]:
     """转换表格为HTML，处理单元格合并"""
     # 获取表格的合并信息
     merged_cells = get_merged_cell_info(table)
@@ -537,7 +536,7 @@ def convert_table_to_html(table, image_map):
         table_text = table_text + '\n</tr>\n'
 
     table_text = table_text + '</table>\n'
-    return table_text
+    return table_text, merged_cells
 
 
 def convert_paragraph_to_html(paragraph, image_map):
@@ -677,7 +676,7 @@ def process_doc_body(doc):
     return processed_items
 
 
-def convert_word_markdown_json(file_path, file_name, file_to_convert, metadata) -> Tuple[str, str, DocxData, int, Dict]:
+def convert_word_markdown_json(config_data, file_path, file_name, file_to_convert, metadata) -> Tuple[str, str, DocxData, int, Dict]:
     """将Word文档转换为HTML，处理编号合并逻辑和表格合并"""
     # 创建images文件夹
     images_dir = os.path.join(file_path, 'images')
@@ -726,12 +725,14 @@ td { border: 0.5pt solid black; padding: 5px; vertical-align: top; }''',
     for item_type, item in processed_items:
         if item_type == 'table':
             try:
-                convert_html = convert_table_to_html(item, image_map)
+                convert_html, merged_cells_dict = convert_table_to_html(item, image_map)
                 html_content.append(convert_html)
-                markdown_content.append(convert_html)
 
-                if len(convert_html) > 0:
-                    docx_paragraph_data = DocxParagraphData(convert_html)
+                ayalyzing_content = analyzing_docx_table(config_data, convert_html)
+                markdown_content.append(ayalyzing_content)
+
+                if len(ayalyzing_content) > 0:
+                    docx_paragraph_data = DocxParagraphData(content=convert_html, ayalyzing_content=ayalyzing_content, type=DocxParagraphData.TYPE_TABLE)
                     docx_chapter_data.add_paragraph(docx_paragraph_data)
             except Exception as e:
                 logger.error(f"表格处理错误: {e}")
@@ -755,7 +756,7 @@ td { border: 0.5pt solid black; padding: 5px; vertical-align: top; }''',
                         title_full_content = sn_text
                         title_text = ''
                         if len(title_list) > 1:
-                            title_text = ''.join(title_list[1:])
+                            title_text = ' '.join(title_list[1:])
                             title_full_content += f" {title_text}"
 
                         html_content.append(f"<h{header_level}>{title_full_content}</h{header_level}>")
@@ -773,7 +774,7 @@ td { border: 0.5pt solid black; padding: 5px; vertical-align: top; }''',
 
                         json_text = ''.join(para_info["text"])
                         if len(json_text) > 0:
-                            docx_paragraph_data = DocxParagraphData(json_text)
+                            docx_paragraph_data = DocxParagraphData(content=json_text, type=DocxParagraphData.TYPE_TEXT)
                             docx_chapter_data.add_paragraph(docx_paragraph_data)
                 if para_info['has_images']:
                     html_content.extend(para_info['html'])
@@ -781,7 +782,7 @@ td { border: 0.5pt solid black; padding: 5px; vertical-align: top; }''',
 
                     json_text = ''.join(para_info["html"])
                     if len(json_text) > 0:
-                        docx_paragraph_data = DocxParagraphData(json_text)
+                        docx_paragraph_data = DocxParagraphData(content=json_text, type=DocxParagraphData.TYPE_IMAGE)
                         docx_chapter_data.add_paragraph(docx_paragraph_data)
 
     html_content.append('</body>\n</html>')
@@ -789,9 +790,9 @@ td { border: 0.5pt solid black; padding: 5px; vertical-align: top; }''',
     return '\n'.join(html_content), '\n'.join(markdown_content), docx_data.to_json(), 1, metadata
 
 
-def convert_handler(pdf_data_opt, data_source, max_files, metadata_list, files) -> Tuple[int, str, list]:
+def convert_handler(config_data, pdf_data_opt, data_source, max_files, metadata_list, files) -> Tuple[int, str, list]:
     if len(files) == 0:
-        return 1, '待处理文件为空', []
+        return 0, '待处理文件为空', []
 
     start_time = datetime.now()
 
@@ -802,6 +803,7 @@ def convert_handler(pdf_data_opt, data_source, max_files, metadata_list, files) 
         files_to_convert = files
 
     files_number = len(files_to_convert)
+    success_number = 0
 
     # 执行过程开始
     return_html_files = []
@@ -822,7 +824,6 @@ def convert_handler(pdf_data_opt, data_source, max_files, metadata_list, files) 
 
             record_id = metadata['record_id']
             ocr_type_strs = metadata['ocr_types']
-            # ocr_type_list = ocr_type_strs.split(';')
         else:
             record_id = -1
             ocr_type_strs = '00'
@@ -834,26 +835,34 @@ def convert_handler(pdf_data_opt, data_source, max_files, metadata_list, files) 
 
         subfolder_path = get_subfolder_path(out_folder, file_name, ocr_type_strs)
 
-        html_content, markdown_content, json_content, result_code, out_metadata = convert_word_markdown_json(
-            subfolder_path, file_name, file_to_convert, metadata)
-        if len(html_content) > 0:
-            html_path, html_file, markdown_file, json_file, metadata_file = save_html_markdown_json(out_folder,
-                                                                                                    file_name,
-                                                                                                    html_content,
-                                                                                                    markdown_content,
-                                                                                                    json_content,
-                                                                                                    out_metadata,
-                                                                                                    ocr_type_strs,
-                                                                                                    subfolder_path)
-            return_html_files.append(
-                {'path': html_path, 'html_file': html_file, 'markdown_file': markdown_file, 'json_file': json_file, 'metadata_file': metadata_file})
-            logger.debug(f"写入文件成功 第{idx + 1}个 文件名：{file_name} 保存路径：{html_path}")
-        else:
-            if result_code == 9:
-                return 0, '表格格式错误', []
+        try:
+            html_content, markdown_content, json_content, result_code, out_metadata = convert_word_markdown_json(config_data,
+                subfolder_path, file_name, file_to_convert, metadata)
+            if len(html_content) > 0 or len(markdown_content) > 0 or json_content is not None:
+                html_path, html_file, markdown_file, json_file, metadata_file = save_html_markdown_json(out_folder,
+                                                                                                        file_name,
+                                                                                                        html_content,
+                                                                                                        markdown_content,
+                                                                                                        json_content,
+                                                                                                        out_metadata,
+                                                                                                        ocr_type_strs,
+                                                                                                        subfolder_path)
+                return_html_files.append(
+                    {'path': html_path, 'html_file': html_file, 'markdown_file': markdown_file, 'json_file': json_file, 'metadata_file': metadata_file})
+                logger.info(f"写入文件成功! 第{idx + 1}个 文件名：{file_name} 保存路径：{html_path}")
 
-        if data_source == 'db' and record_id > 0:
-            pdf_data_opt.update_pri_finish_orc_start(record_id)
+                success_number += 1
+
+                if data_source == 'db' and record_id != '':
+                    json_file_name = os.path.basename(json_file)
+                    result_num = pdf_data_opt.update_pri_fix_file(record_id, json_file, json_file_name)
+                    if result_num > 0:
+                        pdf_data_opt.insert_pri_docx_handler(record_id)
+            else:
+                if result_code == 9:
+                    return 0, '表格格式错误', []
+        except Exception as e:
+            logger.error(f"处理文件失败！第{idx + 1}个 文件名：{file_name} 路径：{out_folder} 错误：{e}")
 
     # 执行过程结束
 
@@ -868,7 +877,7 @@ def convert_handler(pdf_data_opt, data_source, max_files, metadata_list, files) 
 
     average_time = round(execution_seconds / len(files_to_convert))
 
-    log_info = f" * * * * * 处理完成！文件数：{files_number}。完成时间：{end_time.strftime('%Y-%m-%d %H:%M:%S')}。总处理时间：{int(hours)} 小时 {int(minutes)} 分 {int(seconds)} 秒，处理速度：{average_time} 秒/个"
+    log_info = f" * * * * * 处理完成！文件数：{files_number} [成功 {success_number}，失败 {files_number - success_number}]。完成时间：{end_time.strftime('%Y-%m-%d %H:%M:%S')}。总处理时间：{int(hours)} 小时 {int(minutes)} 分 {int(seconds)} 秒，处理速度：{average_time} 秒/个"
     logger.info(log_info)
     return len(files_to_convert), '处理完成', return_html_files
 
@@ -884,17 +893,22 @@ def get_data_from_db(pdf_data_opt, batch_number) -> Tuple[int, list, dict]:
 
     # 循环输出查询结果
     for row in records:
-        record_id = row['ID']
-        word_file = row['WORD_FILE']
-        word_file_name = row['WORD_FILE_NAME']
-        word_title = row['TITLE']
+        record_id = row['id']
+        word_file = row['word_file']
+        word_title = row['title']
+        # json_file = row['json_file']
+        # json_file_name = row['json_file_name']
         file_name = os.path.basename(word_file)
         out_folder = os.path.dirname(word_file)
         if file_name.endswith('.doc') or file_name.endswith('.docx'):
-            metadata_list[word_file_name] = {"out_path": out_folder,
+            metadata_list[file_name] = {"out_path": out_folder,
                                        "record_id": record_id, "title": word_title, "ocr_types": '00'}
             if os.path.isfile(word_file):
                 files.append(word_file)
+            else:
+                logger.warning(f"文件不存在：{word_file}")
+        else:
+            logger.warning(f"文件不是doc或docx格式，跳过：{word_file}")
     return 1, files, metadata_list
 
 
@@ -927,7 +941,7 @@ def get_data_from_path(metadata_file_arg, in_folder_arg, out_folder_arg, ocr_typ
         files = [f for f in files if os.path.isfile(f) and f.endswith('.doc') or f.endswith('.docx')]
     for file in files:
         file_name = os.path.basename(file)
-        metadata_list[file_name] = {"out_path": out_folder, "record_id": -1,
+        metadata_list[file_name] = {"out_path": out_folder, "record_id": '',
                                     "ocr_types": ocr_types}
     return 1, files, metadata_list
 
@@ -950,6 +964,17 @@ def check_files_status(pdf_data_opt, max_files_arg) -> Tuple[int, list]:
     return len(records), error_files
 
 
+def analyzing_docx_table(config_data: Config, table_html: str) -> str:
+    prompt_head = "你是处理HTML格式的专家，任务是将HTML表格处理为符合要求的文本并按照要求输出。请遵循以下要求：\n" + \
+                  "1.不添加原文中不存在的任何新信息；\n" + \
+                  "2.理解HTML表格，整合为一段文字内容；\n" + \
+                  "3.只回复符合格式要求的文本，不添加任何引言、解释或元数据。\n"
+
+    http_utils = HttpUtils(config_data)
+    resp_content, resp_result = http_utils.request_openai_api(prompt_head=prompt_head, text_content=table_html)
+    return resp_content
+
+
 def main():
     parser = argparse.ArgumentParser(description="转化docx文件为html及json.")
     parser.add_argument("--in_folder", help="Input folder with files.")
@@ -960,7 +985,7 @@ def main():
     parser.add_argument("--config_file", default='config.ini', help="config file.")
     # 增加操作类型，convert：识别转化PDF check：检查转化效果
     parser.add_argument("--run_type", default='convert', help="run type type (convert or check)")
-    parser.add_argument("--ocr_types", type=str, default='40', help="OCR type (40:word文件)")
+    parser.add_argument("--ocr_types", type=str, default='00', help="OCR type (40:word文件)")
 
     args = parser.parse_args()
 
@@ -990,6 +1015,12 @@ def main():
     if sleep_minute == 0:
         sleep_minute = 10
 
+    log_level = config.get_sys_param('log_level')
+    if log_level is not None:
+        set_logru(log_level=log_level)
+    else:
+        set_logru()
+
     if run_type_arg == 'convert':
         if data_source == 'db':
             pdf_data_opt = PDFDataOperator(config_file_arg)
@@ -998,11 +1029,11 @@ def main():
                 if result_code == 0:
                     return
 
-                result_code, result_msg, out_file = convert_handler(pdf_data_opt, data_source, max_files_arg,
+                result_code, result_msg, out_file = convert_handler(config, pdf_data_opt, data_source, max_files_arg,
                                                                     metadata_list, files)
                 if result_code == 0:
                     return
-                if len(files) == batch_number:
+                elif result_code > 0:
                     time.sleep(60)
                 else:
                     time.sleep(sleep_minute * 60)
@@ -1012,7 +1043,7 @@ def main():
             if result_code == 0:
                 return
 
-            result_code, result_msg, out_file = convert_handler(None, data_source, max_files_arg, metadata_list,
+            result_code, result_msg, out_file = convert_handler(config,None, data_source, max_files_arg, metadata_list,
                                                                 files)
             if result_code == 0:
                 return

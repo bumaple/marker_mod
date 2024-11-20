@@ -1,75 +1,20 @@
 import argparse
+import os
 
 import openai
 from flask import Flask, request, json
+from loguru import logger
 
-from marker.logger import setup_logger
+from convert_word import convert_handler
 from marker.config_read import Config
-
-from convert_word import *
+from marker.logger import set_logru
+from marker.http.http_utils import HttpUtils
 
 app = Flask(__name__)
 
-logger = setup_logger()
+set_logru()
 
 config_data = None
-
-def request_openai_api(prompt_head, text_content) -> str:
-    model_name = config_data.get_server_param('model')
-    if model_name is None:
-        log_info = f"model name is not exist!"
-        print(log_info)
-        logger.error(log_info)
-        return "system error!"
-
-    model_url = config_data.get_server_param('url')
-    if model_url is None:
-        log_info = f"model url is not exist!"
-        print(log_info)
-        logger.error(log_info)
-        return "system error!"
-
-    api_key = config_data.get_server_param('key')
-
-    llm_temperature = config_data.get_server_param('temperature')
-    if llm_temperature is None:
-        llm_temperature = 0
-    else:
-        llm_temperature = float(llm_temperature)
-
-    llm_top_p = config_data.get_server_param('top_p')
-    if llm_top_p is None:
-        llm_top_p = 0
-    else:
-        llm_top_p = float(llm_top_p)
-
-    llm_max_tokens = config_data.get_server_param('max_tokens')
-    if llm_max_tokens is None:
-        llm_max_tokens = 0
-    else:
-        llm_max_tokens = int(llm_max_tokens)
-
-    openai.api_key = api_key
-    openai.base_url = model_url
-
-    params = {
-        "model": model_name,
-        "messages": [{"role": "system", "content": f"{prompt_head}"},
-                     {"role": "user", "content": f"以下是需要处理的文本：\n{text_content}"}],
-        "max_tokens": llm_max_tokens
-    }
-    if llm_temperature not in [None, 0]:
-        params["temperature"] = llm_temperature
-    if llm_top_p not in [None, 0]:
-        params["top_p"] = llm_top_p
-    if llm_max_tokens not in [None, 0]:
-        params["max_tokens"] = llm_max_tokens
-
-    # create a chat completion
-    completion = openai.chat.completions.create(**params)
-
-    return completion.choices[0].message.content
-
 
 def replace_string(replace_str: str, str_list: list):
     for str_val in str_list:
@@ -104,7 +49,8 @@ def fix_latex_markdown():
                   f"3.文本中的数学、化学公式等LaTex公式修改为完整正确的Markdown公式，{'用$内容$进行标记' if latex_type == 'together' else '用$$内容$$进行标记'}；\n" + \
                   "4.只回复符合格式要求的文本，不添加任何引言、解释或元数据。\n"
 
-    resp_content = request_openai_api(prompt_head=prompt_head, text_content=text_value)
+    http_utils = HttpUtils(config_data)
+    resp_content = http_utils.request_openai_api(prompt_head=prompt_head, text_content=text_value)
 
     replace_strs = ['``` ```markdown', '``````markdown', '```markdown', '```', '\n']
     resp_content = replace_string(resp_content, replace_strs)
@@ -158,7 +104,8 @@ def fix_table_markdown():
     else:
         req_content = text_content
 
-    resp_content = request_openai_api(prompt_head=prompt_head, text_content=req_content)
+    http_utils = HttpUtils(config_data)
+    resp_content = http_utils.request_openai_api(prompt_head=prompt_head, text_content=req_content)
 
     replace_strs = ['``` ```markdown', '``````markdown', '```markdown', '```', '\n']
     resp_content = replace_string(resp_content, replace_strs)
@@ -201,7 +148,7 @@ def convert_docx():
                 file_name = os.path.basename(file)
                 metadata_list[file_name] = {"in_file": in_file_input}
 
-            result_code, result_msg, out_file_data = convert_handler(None, data_source, 0, metadata_list,
+            result_code, result_msg, out_file_data = convert_handler(config_data,None, data_source, 0, metadata_list,
                                       files)
             if result_code == 1:
                 is_success = True

@@ -14,11 +14,13 @@ class PDFDataOperator:
             self.table_name_pri_pdf = 't_pdf_info_copy1'
             self.table_name_sub_md = 't_pdf_md_info_copy1'
             self.table_name_pri_docx = 't_word_info_copy1'
+            self.table_name_pri_docx_handler = 't_word_handler_info_copy1'
         else:
             # 正式表名
             self.table_name_pri_pdf = 't_pdf_info'
             self.table_name_sub_md = 't_pdf_md_info'
             self.table_name_pri_docx = 't_word_info'
+            self.table_name_pri_docx_handler = 't_word_handler_info'
 
     def query_need_ocr_v1(self, ocr_type, max_record):
         try:
@@ -39,22 +41,6 @@ class PDFDataOperator:
     def query_need_ocr_v2(self, max_record):
         try:
             select_query = f"SELECT * FROM {self.table_name_pri_pdf} WHERE FINISH_OCR = %s AND DELETE_FLAG = '0' ORDER BY OCR_PRIORITY, CREATE_TIME"
-            if max_record > 0:
-                select_query = select_query + " LIMIT 0, %s"
-            self.db.connect()
-            if max_record > 0:
-                results = self.db.query(select_query, (0, max_record))
-            else:
-                results = self.db.query(select_query, (0,))
-            return results
-        except mysql.connector.Error as err:
-            print(f"Database Error: {err}")
-        finally:
-            self.db.close()
-
-    def query_need_docx(self, max_record):
-        try:
-            select_query = f"SELECT * FROM {self.table_name_pri_docx} WHERE CONFIRM = %s AND DELETE_FLAG = '0' ORDER BY CREATE_TIME"
             if max_record > 0:
                 select_query = select_query + " LIMIT 0, %s"
             self.db.connect()
@@ -245,6 +231,44 @@ class PDFDataOperator:
             update_query = f"UPDATE {self.table_name_sub_md} SET FINISH_FIX = 1, UPDATE_TIME = NOW() WHERE ID = %s"
             self.db.connect()
             rows = self.db.update(update_query, (ocr_type, md_path, md_file, reocrd_id))
+            return rows
+        except mysql.connector.Error as err:
+            print(f"Database Error: {err}")
+        finally:
+            self.db.close()
+
+    def query_need_docx(self, max_record):
+        try:
+            select_query = f"SELECT * FROM {self.table_name_pri_docx} WHERE confirm = %s AND delete_flag = '0' AND id not in (SELECT DISTINCT(word_info_id) FROM {self.table_name_pri_docx_handler} WHERE delete_flag = '0') ORDER BY creat_time"
+            if max_record > 0:
+                select_query = select_query + " LIMIT 0, %s"
+            self.db.connect()
+            if max_record > 0:
+                results = self.db.query(select_query, (1, max_record))
+            else:
+                results = self.db.query(select_query, (1,))
+            return results
+        except mysql.connector.Error as err:
+            print(f"Database Error: {err}")
+        finally:
+            self.db.close()
+
+    def insert_pri_docx_handler(self, record_id):
+        try:
+            update_query = f"INSERT INTO {self.table_name_pri_docx_handler}(word_info_id, delete_flag, update_time) VALUES (%s, '0', NOW())"
+            self.db.connect()
+            recoid_id = self.db.insert(update_query, (record_id, ))
+            return record_id
+        except mysql.connector.Error as err:
+            print(f"Database Error: {err}")
+        finally:
+            self.db.close()
+
+    def update_pri_fix_file(self, reocrd_id, json_file, json_file_name):
+        try:
+            update_query = f"UPDATE {self.table_name_pri_docx} SET json_file = %s, json_file_name=%s, update_time = NOW() WHERE id = %s"
+            self.db.connect()
+            rows = self.db.update(update_query, (json_file, json_file_name, reocrd_id))
             return rows
         except mysql.connector.Error as err:
             print(f"Database Error: {err}")

@@ -3,18 +3,52 @@ from typing import Tuple
 from attr import define,field
 from loguru import logger
 
+from marker.docx.html_parser import HTMLTableParser, parse_img_tag
+
+
 # Docx文件段落数据
 @define
 class DocxParagraphData:
+
+    TYPE_TEXT = 'text'
+    TYPE_TABLE = 'table'
+    TYPE_IMAGE = 'image'
+
+    # 段落类型 txt table image
+    type: str = field()
     content: str = field()
+    ayalyzing_content: str = field(default='')
 
     def jsonformat(self):
-        return {
-            "段落内容": self.content
-        }
+        if self.type == DocxParagraphData.TYPE_TABLE:
+            common_data = {
+                "表格HTML": self.content,
+            }
+            # try:
+            #     return_content = HTMLTableParser(self.content, self.cells_dict).parse_dict_to_json()
+            # except Exception as e:
+            #     logger.error(f"解析表格失败: {e}")
+            #     logger.error(f" * * * {self.content}")
+            #     raise Exception(f"解析表格失败: {e}")
+            if len(self.ayalyzing_content) > 0:
+                common_data["表格内容"] = self.ayalyzing_content
+            return common_data
+        elif self.type == DocxParagraphData.TYPE_IMAGE:
+            return_content = parse_img_tag(self.content)
+            return return_content
+        else:
+            return {
+                "段落内容": self.content
+            }
 
     def __str__(self):
-        return self.content
+        if self.type == DocxParagraphData.TYPE_TABLE:
+            # return_content = HTMLTableParser(self.content).parse_to_json()
+            return self.content
+        elif self.type == DocxParagraphData.TYPE_IMAGE:
+            return self.content
+        else:
+            return self.content
 
 
 # Docx文件章节数据
@@ -43,7 +77,7 @@ class DocxChapterData:
             "章节级别": self.level,
         }
         if len(self.paragraphs) > 0:
-            common_data["段落内容"] = [paragraph.__str__() for paragraph in self.paragraphs]
+            common_data["章节内容"] = [paragraph.jsonformat() for paragraph in self.paragraphs]
         if len(self.subChapters) > 0:
             common_data["子章节"] = [subChapter.jsonformat() for subChapter in self.subChapters.values()]
         return common_data
