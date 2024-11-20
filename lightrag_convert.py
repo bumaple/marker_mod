@@ -185,7 +185,8 @@ async def get_data_from_db(pdf_data_opt, batch_number) -> Tuple[int, list, dict]
             markdown_file = json_file.rsplit(".", 1)[0] + ".md"
             if os.path.isfile(markdown_file):
                 files.append(markdown_file)
-                metadata_list[markdown_file] = {"out_path": out_folder,
+                markdown_file_name = os.path.basename(markdown_file)
+                metadata_list[markdown_file_name] = {"out_path": out_folder,
                                                 "record_id": record_id, "title": word_title}
             else:
                 logger.warning(f"文件不存在：{markdown_file}")
