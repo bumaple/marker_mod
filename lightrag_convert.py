@@ -169,7 +169,7 @@ async def get_data_from_db(pdf_data_opt, batch_number) -> Tuple[int, list, dict]
     metadata_list = {}
     files = []
 
-    records = pdf_data_opt.query_need_docx(batch_number)
+    records = pdf_data_opt.query_pri_docx_kg(batch_number)
     if len(records) <= 0:
         log_info = f"没有需要处理的数据！"
         logger.info(log_info)

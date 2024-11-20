@@ -269,6 +269,22 @@ class PDFDataOperator:
         finally:
             self.db.close()
 
+    def query_pri_docx_kg(self, max_record):
+        try:
+            select_query = f"SELECT * FROM {self.table_name_pri_docx} WHERE finish_kg = %s AND delete_flag = '0' AND id in (SELECT DISTINCT(word_info_id) FROM {self.table_name_pri_docx_handler} WHERE delete_flag = '0') ORDER BY creat_time"
+            if max_record > 0:
+                select_query = select_query + " LIMIT 0, %s"
+            self.db.connect()
+            if max_record > 0:
+                results = self.db.query(select_query, (0, max_record))
+            else:
+                results = self.db.query(select_query, (0,))
+            return results
+        except mysql.connector.Error as err:
+            print(f"Database Error: {err}")
+        finally:
+            self.db.close()
+
     def insert_pri_docx_handler(self, record_id):
         try:
             update_query = f"INSERT INTO {self.table_name_pri_docx_handler}(word_info_id, delete_flag, update_time) VALUES (%s, '0', NOW())"
