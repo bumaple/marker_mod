@@ -947,20 +947,18 @@ def get_data_from_path(metadata_file_arg, in_folder_arg, out_folder_arg, ocr_typ
 
 
 def check_files_status(pdf_data_opt, max_files_arg) -> Tuple[int, list]:
-    records = pdf_data_opt.query_sub_finish_fix(max_files_arg)
+    records = pdf_data_opt.query_all_valid_docx(max_files_arg)
 
     error_files = []
     # 循环输出查询结果
     for row in records:
         # record_id = row['ID']
-        md_file_path = row['MD_FILE_DIR']
-        md_file_name = row['MD_FILE_NAME']
-        md_file = os.path.join(md_file_path, md_file_name)
-        if md_file.endswith('.md'):
-            if not os.path.isfile(md_file):
-                error_files.append(md_file)
+        word_file = row['word_file']
+        if word_file.endswith('.doc') or word_file.endswith('.docx'):
+            if not os.path.isfile(word_file):
+                error_files.append(word_file)
         else:
-            error_files.append(md_file)
+            error_files.append(word_file)
     return len(records), error_files
 
 

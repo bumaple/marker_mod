@@ -172,3 +172,4 @@ cython_debug/
 /logs/
 config.ini
 /models/
+/lightrag/

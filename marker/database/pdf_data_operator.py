@@ -237,6 +237,22 @@ class PDFDataOperator:
         finally:
             self.db.close()
 
+    def query_all_valid_docx(self, max_record):
+        try:
+            select_query = f"SELECT * FROM {self.table_name_pri_docx} WHERE confirm = %s AND delete_flag = '0' ORDER BY creat_time"
+            if max_record > 0:
+                select_query = select_query + " LIMIT 0, %s"
+            self.db.connect()
+            if max_record > 0:
+                results = self.db.query(select_query, (1, max_record))
+            else:
+                results = self.db.query(select_query, (1,))
+            return results
+        except mysql.connector.Error as err:
+            print(f"Database Error: {err}")
+        finally:
+            self.db.close()
+
     def query_need_docx(self, max_record):
         try:
             select_query = f"SELECT * FROM {self.table_name_pri_docx} WHERE confirm = %s AND delete_flag = '0' AND id not in (SELECT DISTINCT(word_info_id) FROM {self.table_name_pri_docx_handler} WHERE delete_flag = '0') ORDER BY creat_time"
@@ -269,6 +285,17 @@ class PDFDataOperator:
             update_query = f"UPDATE {self.table_name_pri_docx} SET json_file = %s, json_file_name=%s, update_time = NOW() WHERE id = %s"
             self.db.connect()
             rows = self.db.update(update_query, (json_file, json_file_name, reocrd_id))
+            return rows
+        except mysql.connector.Error as err:
+            print(f"Database Error: {err}")
+        finally:
+            self.db.close()
+
+    def update_pri_docx_kg_finish(self, reocrd_id):
+        try:
+            update_query = f"UPDATE {self.table_name_pri_docx} SET finish_kg = %s, finish_kg_date = NOW() WHERE id = %s"
+            self.db.connect()
+            rows = self.db.update(update_query, (1, reocrd_id))
             return rows
         except mysql.connector.Error as err:
             print(f"Database Error: {err}")

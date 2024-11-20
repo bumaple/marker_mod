@@ -8,6 +8,7 @@ class Config:
     NODE_SYS = 'system'
     NODE_SERVER = 'server'
     NODE_RABBITMQ = 'rabbitmq'
+    NODE_LIGHTRAG = 'lightrag'
 
     def __init__(self, config_file):
         self.config = configparser.ConfigParser()
@@ -58,6 +59,9 @@ class Config:
 
     def get_rabbitmq_param(self, param_name: str, param_type: type = str):
         return self.get_config_node_param(self.NODE_RABBITMQ, param_name, param_type)
+
+    def get_lightrag_param(self, param_name: str, param_type: type = str):
+        return self.get_config_node_param(self.NODE_LIGHTRAG, param_name, param_type)
 
     def is_dev_mode(self):
         return self.get_config_node_param(self.NODE_SYS, 'dev', bool)
