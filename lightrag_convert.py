@@ -177,14 +177,12 @@ async def get_data_from_db(pdf_data_opt, batch_number) -> Tuple[int, list, dict]
     # 循环输出查询结果
     for row in records:
         record_id = row['id']
-        # word_file = row['word_file']
         word_title = row['title']
-        html_file = row['html_file']
-        # html_file_name = row['html_file_name']
-        file_name = os.path.basename(html_file)
-        out_folder = os.path.dirname(html_file)
-        if file_name.endswith('.html') or file_name.endswith('.htm'):
-            markdown_file = html_file.rsplit(".", 1)[0] + ".md"
+        json_file = row['json_file']
+        file_name = os.path.basename(json_file)
+        out_folder = os.path.dirname(json_file)
+        if file_name.endswith('.json'):
+            markdown_file = json_file.rsplit(".", 1)[0] + ".md"
             if os.path.isfile(markdown_file):
                 files.append(markdown_file)
                 metadata_list[markdown_file] = {"out_path": out_folder,
@@ -192,7 +190,7 @@ async def get_data_from_db(pdf_data_opt, batch_number) -> Tuple[int, list, dict]
             else:
                 logger.warning(f"文件不存在：{markdown_file}")
         else:
-            logger.warning(f"文件不是html或htm格式，跳过：{html_file}")
+            logger.warning(f"文件不是json格式，跳过：{json_file}")
     return 1, files, metadata_list
 
 
@@ -235,13 +233,12 @@ async def check_files_status(pdf_data_opt, max_files_arg) -> Tuple[int, list]:
     error_files = []
     # 循环输出查询结果
     for row in records:
-        # record_id = row['ID']
-        html_file = row['html_file']
-        if html_file.endswith('.html') or html_file.endswith('.htm'):
-            if not os.path.isfile(html_file):
-                error_files.append(html_file)
+        json_file = row['json_file']
+        if json_file.endswith('.json'):
+            if not os.path.isfile(json_file):
+                error_files.append(json_file)
         else:
-            error_files.append(html_file)
+            error_files.append(json_file)
     return len(records), error_files
 
 
