@@ -12,9 +12,7 @@ from marker.http.http_utils import HttpUtils
 
 app = Flask(__name__)
 
-set_logru()
-
-config_data = None
+config = None
 
 def replace_string(replace_str: str, str_list: list):
     for str_val in str_list:
@@ -49,8 +47,8 @@ def fix_latex_markdown():
                   f"3.文本中的数学、化学公式等LaTex公式修改为完整正确的Markdown公式，{'用$内容$进行标记' if latex_type == 'together' else '用$$内容$$进行标记'}；\n" + \
                   "4.只回复符合格式要求的文本，不添加任何引言、解释或元数据。\n"
 
-    http_utils = HttpUtils(config_data)
-    resp_content = http_utils.request_openai_api(prompt_head=prompt_head, text_content=text_value)
+    http_utils = HttpUtils(config)
+    resp_content, resp_code = http_utils.request_openai_api(prompt_head=prompt_head, text_content=text_value)
 
     replace_strs = ['``` ```markdown', '``````markdown', '```markdown', '```', '\n']
     resp_content = replace_string(resp_content, replace_strs)
@@ -104,8 +102,8 @@ def fix_table_markdown():
     else:
         req_content = text_content
 
-    http_utils = HttpUtils(config_data)
-    resp_content = http_utils.request_openai_api(prompt_head=prompt_head, text_content=req_content)
+    http_utils = HttpUtils(config)
+    resp_content, resp_code = http_utils.request_openai_api(prompt_head=prompt_head, text_content=req_content)
 
     replace_strs = ['``` ```markdown', '``````markdown', '```markdown', '```', '\n']
     resp_content = replace_string(resp_content, replace_strs)
@@ -148,7 +146,7 @@ def convert_docx():
                 file_name = os.path.basename(file)
                 metadata_list[file_name] = {"in_file": in_file_input}
 
-            result_code, result_msg, out_file_data = convert_handler(config_data,None, data_source, 0, metadata_list,
+            result_code, result_msg, out_file_data = convert_handler(config,None, data_source, 0, metadata_list,
                                       files)
             if result_code == 1:
                 is_success = True
@@ -174,12 +172,19 @@ def convert_docx():
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Custom API Server to use LLM.")
     parser.add_argument("--config_file", default='config.ini', help="config file.")
+    parser.add_argument("--port", default='9993', type=int, help="port")
 
     args = parser.parse_args()
-    config_data = Config(args.config_file)
+    config = Config(args.config_file)
 
-    port = config_data.get_server_param('port')
+    port = args.port
     if port is None:
         port = 9992
 
-    app.run(debug=config_data.is_dev_mode(), host='0.0.0.0', port=port)
+    log_level = config.get_sys_param('log_level')
+    if log_level is not None:
+        set_logru(log_level=log_level)
+    else:
+        set_logru()
+
+    app.run(debug=config.is_dev_mode(), host='0.0.0.0', port=port)

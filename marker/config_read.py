@@ -9,6 +9,7 @@ class Config:
     NODE_SERVER = 'server'
     NODE_RABBITMQ = 'rabbitmq'
     NODE_LIGHTRAG = 'lightrag'
+    NODE_NEO4J = 'neo4j'
 
     def __init__(self, config_file):
         self.config = configparser.ConfigParser()
@@ -62,6 +63,9 @@ class Config:
 
     def get_lightrag_param(self, param_name: str, param_type: type = str):
         return self.get_config_node_param(self.NODE_LIGHTRAG, param_name, param_type)
+
+    def get_neo4j_param(self, param_name: str, param_type: type = str):
+        return self.get_config_node_param(self.NODE_NEO4J, param_name, param_type)
 
     def is_dev_mode(self):
         return self.get_config_node_param(self.NODE_SYS, 'dev', bool)

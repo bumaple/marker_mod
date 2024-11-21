@@ -10,6 +10,8 @@ import numpy as np
 from lightrag import LightRAG
 from lightrag.llm import openai_complete_if_cache, openai_embedding
 from lightrag.utils import EmbeddingFunc
+from lightrag.kg.neo4j_impl import Neo4JStorage
+
 from loguru import logger
 
 from marker.config_read import Config
@@ -23,17 +25,17 @@ config: Config = None
 async def llm_model_func(
         prompt, system_prompt=None, history_messages=None, **kwargs
 ) -> str:
-    model_name = config.get_lightrag_param('model_name')
+    model_name = config.get_lightrag_param('build_model_name')
     if model_name is None:
-        log_info = f"model name is not exist!"
+        log_info = f"build model name is not exist!"
         logger.error(log_info)
 
-    model_url = config.get_lightrag_param('model_url')
+    model_url = config.get_lightrag_param('build_model_url')
     if model_url is None:
-        log_info = f"model url is not exist!"
+        log_info = f"build model url is not exist!"
         logger.error(log_info)
 
-    model_key = config.get_lightrag_param('model_key')
+    model_key = config.get_lightrag_param('build_model_key')
 
     if history_messages is None:
         history_messages = []
@@ -49,17 +51,17 @@ async def llm_model_func(
 
 
 async def embedding_func(texts: list[str]) -> np.ndarray:
-    embedding_name = config.get_lightrag_param('embedding_name')
+    embedding_name = config.get_lightrag_param('build_embedding_name')
     if embedding_name is None:
-        log_info = f"embedding name is not exist!"
+        log_info = f"build embedding name is not exist!"
         logger.error(log_info)
 
-    embedding_url = config.get_lightrag_param('embedding_url')
+    embedding_url = config.get_lightrag_param('build_embedding_url')
     if embedding_url is None:
-        log_info = f"embedding url is not exist!"
+        log_info = f"build embedding url is not exist!"
         logger.error(log_info)
 
-    embedding_key = config.get_lightrag_param('embedding_key')
+    embedding_key = config.get_lightrag_param('build_embedding_key')
 
     return await openai_embedding(
         texts,
@@ -93,6 +95,60 @@ async def convert_handler(pdf_data_opt, data_source, max_files, metadata_list, f
     else:
         max_tokens = int(max_tokens)
 
+    # 图数据库类型
+    graph_store = config.get_lightrag_param('graph_store')
+
+    embedding_dimension = await get_embedding_dim()
+    logger.info(f"检测 embedding 维度: {embedding_dimension}")
+
+    if graph_store == 'neo4j':
+        # 初始化neo4j 数据库连接参数
+        neo4j_url = config.get_neo4j_param('url')
+        if neo4j_url is None:
+            return 0, f"neo4j url 不存在！"
+
+        neo4j_user = config.get_neo4j_param('user')
+        if neo4j_user is None:
+            return 0, f"neo4j user 不存在！"
+
+        neo4j_password = config.get_neo4j_param('password')
+        if neo4j_password is None:
+            neo4j_password = ''
+
+        neo4j_database = config.get_neo4j_param('database')
+        if neo4j_database is None:
+            neo4j_database = 'neo4j_lightrag'
+
+        os.environ['NEO4J_URI'] = neo4j_url
+        os.environ["NEO4J_USERNAME"] = neo4j_user
+        os.environ["NEO4J_PASSWORD"] = neo4j_password
+
+        neo4j_db = Neo4JStorage(namespace=neo4j_database, global_config={})
+
+        rag = LightRAG(
+            working_dir=working_dir,
+            llm_model_func=llm_model_func,
+            graph_storage="Neo4JStorage",
+            log_level="INFO",
+            embedding_func=EmbeddingFunc(
+                embedding_dim=embedding_dimension,
+                max_token_size=max_tokens,
+                func=embedding_func,
+            ),
+        )
+        rag.graph_storage_cls.db = neo4j_db
+    else:
+        rag = LightRAG(
+            working_dir=working_dir,
+            llm_model_func=llm_model_func,
+            log_level="INFO",
+            embedding_func=EmbeddingFunc(
+                embedding_dim=embedding_dimension,
+                max_token_size=max_tokens,
+                func=embedding_func,
+            ),
+        )
+
     start_time = datetime.now()
 
     # 处理最大文件数
@@ -108,33 +164,22 @@ async def convert_handler(pdf_data_opt, data_source, max_files, metadata_list, f
     for idx, file_to_convert in enumerate(files_to_convert):
         file_name = os.path.basename(file_to_convert)
         metadata = metadata_list.get(file_name)
+        if metadata is None:
+            log_info = f"MetaData 中不存在 {file_name}！"
+            logger.error(log_info)
+            continue
 
         if data_source == 'db':
             if 'record_id' not in metadata:
                 log_info = f"MetaData 中不存在 id！ {metadata}"
                 logger.error(log_info)
-                return 0, f"MetaData 中不存在 id！ {metadata}"
+                continue
 
             record_id = metadata['record_id']
         else:
             record_id = -1
 
         try:
-            embedding_dimension = await get_embedding_dim()
-            logger.info(f"检测 embedding 维度: {embedding_dimension}")
-
-            rag = LightRAG(
-                working_dir=working_dir,
-                llm_model_func=llm_model_func,
-                graph_storage="Neo4JStorage",
-                log_level="INFO",
-                embedding_func=EmbeddingFunc(
-                    embedding_dim=embedding_dimension,
-                    max_token_size=max_tokens,
-                    func=embedding_func,
-                ),
-            )
-
             with open(file_to_convert, "r", encoding="utf-8") as f:
                 # await rag.insert(f.read())
                 await rag.ainsert(f.read())
