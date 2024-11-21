@@ -40,7 +40,7 @@ def process_in_batches(tx, query, data, batch_size):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="转化文件到lightRAG.")
+    parser = argparse.ArgumentParser(description="转化lightRAG数据到neo4j.")
     parser.add_argument("--config_file", default='config.ini', help="config file.")
 
     args = parser.parse_args()
