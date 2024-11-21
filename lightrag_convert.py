@@ -97,6 +97,10 @@ async def convert_handler(pdf_data_opt, data_source, max_files, metadata_list, f
 
     # 图数据库类型
     graph_store = config.get_lightrag_param('graph_store')
+    if graph_store is None:
+        graph_store = 'default'
+
+    log_level = config.get_sys_param('log_level')
 
     embedding_dimension = await get_embedding_dim()
     logger.info(f"检测 embedding 维度: {embedding_dimension}")
@@ -129,7 +133,7 @@ async def convert_handler(pdf_data_opt, data_source, max_files, metadata_list, f
             working_dir=working_dir,
             llm_model_func=llm_model_func,
             graph_storage="Neo4JStorage",
-            log_level="INFO",
+            log_level=log_level,
             embedding_func=EmbeddingFunc(
                 embedding_dim=embedding_dimension,
                 max_token_size=max_tokens,
@@ -141,7 +145,7 @@ async def convert_handler(pdf_data_opt, data_source, max_files, metadata_list, f
         rag = LightRAG(
             working_dir=working_dir,
             llm_model_func=llm_model_func,
-            log_level="INFO",
+            log_level=log_level,
             embedding_func=EmbeddingFunc(
                 embedding_dim=embedding_dimension,
                 max_token_size=max_tokens,
