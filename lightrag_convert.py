@@ -78,9 +78,9 @@ async def get_embedding_dim():
     return embedding_dim
 
 
-async def convert_handler(pdf_data_opt, data_source, max_files, metadata_list, files) -> Tuple[int, str]:
+async def convert_handler(pdf_data_opt, data_source, max_files, metadata_list, files) -> Tuple[int, int, str]:
     if len(files) == 0:
-        return 0, '待处理文件为空'
+        return 0, 0, '待处理文件为空'
 
     working_dir = config.get_lightrag_param('working_dir')
     if working_dir is None:
@@ -98,22 +98,22 @@ async def convert_handler(pdf_data_opt, data_source, max_files, metadata_list, f
     # 图数据库类型
     graph_store = config.get_lightrag_param('graph_store')
     if graph_store is None:
-        graph_store = 'default'
+        graph_store = 'NetworkXStorage'
 
     log_level = config.get_sys_param('log_level')
 
     embedding_dimension = await get_embedding_dim()
     logger.info(f"检测 embedding 维度: {embedding_dimension}")
 
-    if graph_store == 'neo4j':
+    if graph_store == 'Neo4JStorage':
         # 初始化neo4j 数据库连接参数
         neo4j_url = config.get_neo4j_param('url')
         if neo4j_url is None:
-            return 0, f"neo4j url 不存在！"
+            return 0, 0, f"neo4j url 不存在！"
 
         neo4j_user = config.get_neo4j_param('user')
         if neo4j_user is None:
-            return 0, f"neo4j user 不存在！"
+            return 0, 0, f"neo4j user 不存在！"
 
         neo4j_password = config.get_neo4j_param('password')
         if neo4j_password is None:
@@ -132,7 +132,7 @@ async def convert_handler(pdf_data_opt, data_source, max_files, metadata_list, f
         rag = LightRAG(
             working_dir=working_dir,
             llm_model_func=llm_model_func,
-            graph_storage="Neo4JStorage",
+            graph_storage=graph_store,
             log_level=log_level,
             embedding_func=EmbeddingFunc(
                 embedding_dim=embedding_dimension,
@@ -211,7 +211,7 @@ async def convert_handler(pdf_data_opt, data_source, max_files, metadata_list, f
 
     log_info = f" * * * * * 处理完成！文件数：{files_number} [成功 {success_number}，失败 {files_number - success_number}]。完成时间：{end_time.strftime('%Y-%m-%d %H:%M:%S')}。总处理时间：{int(hours)} 小时 {int(minutes)} 分 {int(seconds)} 秒，处理速度：{average_time} 秒/个"
     logger.info(log_info)
-    return len(files_to_convert), '处理完成'
+    return files_number, success_number, '处理完成'
 
 
 async def get_data_from_db(pdf_data_opt, batch_number) -> Tuple[int, list, dict]:
@@ -344,25 +344,25 @@ async def main():
                 if result_code == 0:
                     return
 
-                result_code, result_msg = await convert_handler(pdf_data_opt, data_source,
+                total_file_num, success_file_num, result_msg = await convert_handler(pdf_data_opt, data_source,
                                                                 max_files_arg,
                                                                 metadata_list, files)
-                if result_code == 0:
+                if success_file_num == 0:
                     return
-                elif result_code > 0:
+                elif success_file_num > 0:
                     time.sleep(60)
-                else:
-                    time.sleep(sleep_minute * 60)
+                # else:
+                #     time.sleep(sleep_minute * 60)
         elif data_source == 'path':
             result_code, files, metadata_list = await get_data_from_path(metadata_file_arg, in_folder_arg,
                                                                          out_folder_arg)
             if result_code == 0:
                 return
 
-            result_code, result_msg = await convert_handler(None, data_source, max_files_arg,
+            total_file_num, success_file_num, result_msg = await convert_handler(None, data_source, max_files_arg,
                                                             metadata_list,
                                                             files)
-            if result_code == 0:
+            if success_file_num == 0:
                 return
         else:
             log_info = f"不支持的data_source参数！{data_source}"

@@ -7,7 +7,7 @@ import numpy as np
 from typing import Optional
 from pydantic import BaseModel
 
-from fastapi import FastAPI, HTTPException, File, UploadFile
+from fastapi import FastAPI, HTTPException
 from lightrag.kg.neo4j_impl import Neo4JStorage
 from lightrag import LightRAG, QueryParam
 from lightrag.llm import openai_complete_if_cache, openai_embedding
@@ -21,9 +21,6 @@ nest_asyncio.apply()
 
 DEFAULT_RAG_DIR = "index_default"
 app = FastAPI(title="标准知识库接口", description="标准知识库接口")
-
-config: Config = None
-rag: LightRAG = None
 
 
 async def llm_model_func(
@@ -43,6 +40,9 @@ async def llm_model_func(
 
     if history_messages is None:
         history_messages = []
+
+    logger.info(f" * * * 发送LLM请求 长度 {len(prompt)}: {prompt}")
+
     return await openai_complete_if_cache(
         model_name,
         prompt,
@@ -50,6 +50,7 @@ async def llm_model_func(
         history_messages=history_messages,
         api_key=model_key,
         base_url=model_url,
+        max_tokens=max_tokens,
         **kwargs,
     )
 
@@ -101,6 +102,10 @@ class Response(BaseModel):
 @app.post("/query", response_model=Response)
 async def query_endpoint(request: QueryRequest):
     try:
+        if graph_store == 'Neo4JStorage':
+            neo4j_db = Neo4JStorage(namespace=neo4j_database, global_config={})
+            rag.graph_storage_cls.db = neo4j_db
+
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(
             None,
@@ -187,12 +192,12 @@ if __name__ == "__main__":
     # 图数据库类型
     graph_store = config.get_lightrag_param('graph_store')
     if graph_store is None:
-        graph_store = 'default'
+        graph_store = 'NetworkXStorage'
 
     embedding_dimension = asyncio.run(get_embedding_dim())
     logger.info(f"检测 embedding 维度: {embedding_dimension}")
 
-    if graph_store == 'neo4j':
+    if graph_store == 'Neo4JStorage':
         # 初始化neo4j 数据库连接参数
         neo4j_url = config.get_neo4j_param('url')
         if neo4j_url is None:
@@ -216,12 +221,10 @@ if __name__ == "__main__":
         os.environ["NEO4J_USERNAME"] = neo4j_user
         os.environ["NEO4J_PASSWORD"] = neo4j_password
 
-        neo4j_db = Neo4JStorage(namespace=neo4j_database, global_config={})
-
         rag = LightRAG(
             working_dir=working_dir,
             llm_model_func=llm_model_func,
-            graph_storage="Neo4JStorage",
+            graph_storage=graph_store,
             log_level=log_level,
             embedding_func=EmbeddingFunc(
                 embedding_dim=embedding_dimension,
@@ -229,7 +232,6 @@ if __name__ == "__main__":
                 func=embedding_func,
             ),
         )
-        rag.graph_storage_cls.db = neo4j_db
     else:
         rag = LightRAG(
             working_dir=working_dir,
