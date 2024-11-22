@@ -41,7 +41,10 @@ async def llm_model_func(
     if history_messages is None:
         history_messages = []
 
-    logger.info(f" * * * 发送LLM请求 长度 {len(prompt)}: {prompt}")
+    if system_prompt is not None:
+        logger.info(f" * * * 发送LLM请求 Prompt长度 {len(prompt)} SystemPrompt长度 {len(system_prompt)}\n {prompt}\n {system_prompt}")
+    else:
+        logger.info(f" * * * 发送LLM请求 Prompt长度 {len(prompt)}\n {prompt}")
 
     return await openai_complete_if_cache(
         model_name,
@@ -99,13 +102,39 @@ class Response(BaseModel):
     message: Optional[str] = None
 
 
+def create_rag_instance():
+    if graph_store == 'Neo4JStorage':
+        rag = LightRAG(
+            working_dir=working_dir,
+            llm_model_func=llm_model_func,
+            graph_storage=graph_store,
+            log_level=log_level,
+            embedding_func=EmbeddingFunc(
+                embedding_dim=embedding_dimension,
+                max_token_size=max_tokens,
+                func=embedding_func,
+            ),
+        )
+        neo4j_db = Neo4JStorage(namespace=neo4j_database, global_config={})
+        rag.graph_storage_cls.db = neo4j_db
+        return rag
+    else:
+        rag = LightRAG(
+            working_dir=working_dir,
+            llm_model_func=llm_model_func,
+            log_level=log_level,
+            embedding_func=EmbeddingFunc(
+                embedding_dim=embedding_dimension,
+                max_token_size=max_tokens,
+                func=embedding_func,
+            ),
+        )
+        return rag
+
 @app.post("/query", response_model=Response)
 async def query_endpoint(request: QueryRequest):
     try:
-        if graph_store == 'Neo4JStorage':
-            neo4j_db = Neo4JStorage(namespace=neo4j_database, global_config={})
-            rag.graph_storage_cls.db = neo4j_db
-
+        rag = create_rag_instance()
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(
             None,
@@ -220,29 +249,6 @@ if __name__ == "__main__":
         os.environ['NEO4J_URI'] = neo4j_url
         os.environ["NEO4J_USERNAME"] = neo4j_user
         os.environ["NEO4J_PASSWORD"] = neo4j_password
-
-        rag = LightRAG(
-            working_dir=working_dir,
-            llm_model_func=llm_model_func,
-            graph_storage=graph_store,
-            log_level=log_level,
-            embedding_func=EmbeddingFunc(
-                embedding_dim=embedding_dimension,
-                max_token_size=max_tokens,
-                func=embedding_func,
-            ),
-        )
-    else:
-        rag = LightRAG(
-            working_dir=working_dir,
-            llm_model_func=llm_model_func,
-            log_level=log_level,
-            embedding_func=EmbeddingFunc(
-                embedding_dim=embedding_dimension,
-                max_token_size=max_tokens,
-                func=embedding_func,
-            ),
-        )
 
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=port)
