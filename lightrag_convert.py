@@ -37,6 +37,10 @@ async def llm_model_func(
 
     model_key = config.get_lightrag_param('build_model_key')
 
+    model_max_tokens = config.get_lightrag_param('model_max_tokens', int)
+    if model_max_tokens is None:
+        model_max_tokens = 8192
+
     if history_messages is None:
         history_messages = []
     return await openai_complete_if_cache(
@@ -46,6 +50,7 @@ async def llm_model_func(
         history_messages=history_messages,
         api_key=model_key,
         base_url=model_url,
+        max_tokens=model_max_tokens,
         **kwargs,
     )
 
@@ -89,11 +94,9 @@ async def convert_handler(pdf_data_opt, data_source, max_files, metadata_list, f
     if not os.path.exists(working_dir):
         os.mkdir(working_dir)
 
-    max_tokens = config.get_lightrag_param('max_tokens')
-    if max_tokens is None:
-        max_tokens = 8192
-    else:
-        max_tokens = int(max_tokens)
+    embedding_max_tokens = config.get_lightrag_param('embedding_max_tokens', int)
+    if embedding_max_tokens is None:
+        embedding_max_tokens = 8192
 
     # 图数据库类型
     graph_store = config.get_lightrag_param('graph_store')
@@ -136,7 +139,7 @@ async def convert_handler(pdf_data_opt, data_source, max_files, metadata_list, f
             log_level=log_level,
             embedding_func=EmbeddingFunc(
                 embedding_dim=embedding_dimension,
-                max_token_size=max_tokens,
+                max_token_size=embedding_max_tokens,
                 func=embedding_func,
             ),
         )
@@ -148,7 +151,7 @@ async def convert_handler(pdf_data_opt, data_source, max_files, metadata_list, f
             log_level=log_level,
             embedding_func=EmbeddingFunc(
                 embedding_dim=embedding_dimension,
-                max_token_size=max_tokens,
+                max_token_size=embedding_max_tokens,
                 func=embedding_func,
             ),
         )

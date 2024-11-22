@@ -26,18 +26,6 @@ app = FastAPI(title="标准知识库接口", description="标准知识库接口"
 async def llm_model_func(
         prompt, system_prompt=None, history_messages=None, **kwargs
 ) -> str:
-    model_name = config.get_lightrag_param('infer_model_name')
-    if model_name is None:
-        log_info = f"infer model name is not exist!"
-        logger.error(log_info)
-
-    model_url = config.get_lightrag_param('infer_model_url')
-    if model_url is None:
-        log_info = f"infer model url is not exist!"
-        logger.error(log_info)
-
-    model_key = config.get_lightrag_param('infer_model_key')
-
     if history_messages is None:
         history_messages = []
 
@@ -53,24 +41,12 @@ async def llm_model_func(
         history_messages=history_messages,
         api_key=model_key,
         base_url=model_url,
-        max_tokens=max_tokens,
+        max_tokens=model_max_tokens,
         **kwargs,
     )
 
 
 async def embedding_func(texts: list[str]) -> np.ndarray:
-    embedding_name = config.get_lightrag_param('infer_embedding_name')
-    if embedding_name is None:
-        log_info = f"infer embedding name is not exist!"
-        logger.error(log_info)
-
-    embedding_url = config.get_lightrag_param('infer_embedding_url')
-    if embedding_url is None:
-        log_info = f"infer embedding url is not exist!"
-        logger.error(log_info)
-
-    embedding_key = config.get_lightrag_param('infer_embedding_key')
-
     return await openai_embedding(
         texts,
         model=embedding_name,
@@ -89,7 +65,7 @@ async def get_embedding_dim():
 class QueryRequest(BaseModel):
     query: str
     mode: str = "hybrid"
-    only_need_context: bool = False
+    # mode: "local", "global", "hybrid", "naive"
 
 
 class InsertRequest(BaseModel):
@@ -111,7 +87,7 @@ def create_rag_instance():
             log_level=log_level,
             embedding_func=EmbeddingFunc(
                 embedding_dim=embedding_dimension,
-                max_token_size=max_tokens,
+                max_token_size=embedding_max_tokens,
                 func=embedding_func,
             ),
         )
@@ -125,7 +101,7 @@ def create_rag_instance():
             log_level=log_level,
             embedding_func=EmbeddingFunc(
                 embedding_dim=embedding_dimension,
-                max_token_size=max_tokens,
+                max_token_size=embedding_max_tokens,
                 func=embedding_func,
             ),
         )
@@ -141,7 +117,12 @@ async def query_endpoint(request: QueryRequest):
             lambda: rag.query(
                 request.query,
                 param=QueryParam(
-                    mode=request.mode, only_need_context=request.only_need_context
+                    mode=request.mode,
+                    only_need_context=query_only_need_context,
+                    top_k=query_top_k,
+                    max_token_for_text_unit=query_max_text_unit,
+                    max_token_for_global_context=query_max_global_context,
+                    max_token_for_local_context=query_max_local_context,
                 ),
             ),
         )
@@ -205,6 +186,7 @@ if __name__ == "__main__":
     else:
         set_logru()
 
+    # 数据目录
     working_dir = config.get_lightrag_param('working_dir')
     if working_dir is None:
         working_dir = os.path.join(os.getcwd(), 'working_neo4j')
@@ -212,11 +194,59 @@ if __name__ == "__main__":
     if not os.path.exists(working_dir):
         os.mkdir(working_dir)
 
-    max_tokens = config.get_lightrag_param('max_tokens')
-    if max_tokens is None:
-        max_tokens = 8192
-    else:
-        max_tokens = int(max_tokens)
+    # 推理模型参数
+    model_name = config.get_lightrag_param('infer_model_name')
+    if model_name is None:
+        log_info = f"infer model name is not exist!"
+        logger.error(log_info)
+
+    model_url = config.get_lightrag_param('infer_model_url')
+    if model_url is None:
+        log_info = f"infer model url is not exist!"
+        logger.error(log_info)
+
+    model_key = config.get_lightrag_param('infer_model_key')
+
+    embedding_name = config.get_lightrag_param('infer_embedding_name')
+    if embedding_name is None:
+        log_info = f"infer embedding name is not exist!"
+        logger.error(log_info)
+
+    embedding_url = config.get_lightrag_param('infer_embedding_url')
+    if embedding_url is None:
+        log_info = f"infer embedding url is not exist!"
+        logger.error(log_info)
+
+    embedding_key = config.get_lightrag_param('infer_embedding_key')
+
+    embedding_max_tokens = config.get_lightrag_param('embedding_max_tokens', int)
+    if embedding_max_tokens is None:
+        embedding_max_tokens = 8192
+
+    model_max_tokens = config.get_lightrag_param('model_max_tokens', int)
+    if model_max_tokens is None:
+        model_max_tokens = 8192
+
+    # 查询参数
+    query_only_need_context = config.get_lightrag_param('query_only_need_context', bool)
+    if query_only_need_context is None:
+        query_only_need_context = False
+
+    query_top_k = config.get_lightrag_param('query_top_k', int)
+    if query_top_k is None:
+        query_top_k = 60
+
+    query_max_text_unit = config.get_lightrag_param('query_max_text_unit', int)
+    if query_max_text_unit is None:
+        query_max_text_unit = 4000
+
+    query_max_global_context = config.get_lightrag_param('query_max_global_context', int)
+    if query_max_global_context is None:
+        query_max_global_context = 4000
+
+    query_max_local_context = config.get_lightrag_param('query_max_local_context', int)
+    if query_max_local_context is None:
+        query_max_local_context = 4000
 
     # 图数据库类型
     graph_store = config.get_lightrag_param('graph_store')
