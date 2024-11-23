@@ -343,9 +343,9 @@ async def main():
 
     log_level = config.get_sys_param('log_level')
     if log_level is not None:
-        set_logru(log_level=log_level)
+        set_logru(log_level=log_level, log_spacename='lightrag_convert_')
     else:
-        set_logru()
+        set_logru(log_spacename='lightrag_convert_')
 
     if run_type_arg == 'convert':
         if data_source == 'db':

@@ -185,9 +185,9 @@ if __name__ == "__main__":
 
     log_level = config.get_sys_param('log_level')
     if log_level is not None:
-        set_logru(log_level=log_level)
+        set_logru(log_level=log_level, log_spacename='api_server_')
     else:
-        set_logru()
+        set_logru(log_spacename='api_server_')
 
     # 数据目录
     working_dir = config.get_lightrag_param('working_dir')
