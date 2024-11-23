@@ -63,19 +63,19 @@ def set_logru(log_directory="logs", log_level='INFO', log_spacename=''):
     logger.remove()  # 移除默认的handler，如果有的话
     logger.add(sys.stdout, level=log_level, enqueue=True, colorize=True, backtrace=True, diagnose=True)
 
-    logger.add(sink=os.path.join(log_directory, log_spacename.join("run.log")), level=log_level, rotation="1 days", retention="30 days",
+    logger.add(sink=os.path.join(log_directory, f"{log_spacename}_run.log"), level=log_level, rotation="1 days", retention="30 days",
                encoding="utf-8", enqueue=True, colorize=False, backtrace=True, diagnose=True, )
 
     # 设置不同级别的日志输出文件
     # logger.add("debug.log", level="DEBUG", rotation="10 MB", filter=lambda record: record["level"].name == "DEBUG")
     # logger.add("info.log", level="INFO", rotation="10 MB", filter=lambda record: record["level"].name == "INFO")
     # logger.add("warning.log", level="WARNING", rotation="10 MB", filter=lambda record: record["level"].name == "WARNING")
-    logger.add(sink=os.path.join(log_directory, log_spacename.join("error.log")), level="ERROR", rotation="1 days", retention="30 days",
+    logger.add(sink=os.path.join(log_directory, f"{log_spacename}_error.log"), level="ERROR", rotation="1 days", retention="30 days",
                encoding="utf-8",
                enqueue=True, colorize=False, backtrace=True, diagnose=True,
                filter=lambda record: record["level"].name == "ERROR")
 
-    logger.add(sink=os.path.join(log_directory, log_spacename.join("trace.log")), level="TRACE", rotation="1 days", retention="30 days",
+    logger.add(sink=os.path.join(log_directory, f"{log_spacename}_trace.log"), level="TRACE", rotation="1 days", retention="30 days",
                encoding="utf-8",
                enqueue=True, colorize=False, backtrace=True, diagnose=True,
                filter=lambda record: record["level"].name == "TRACE")
