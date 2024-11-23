@@ -7,13 +7,12 @@ from datetime import datetime
 from typing import Tuple
 
 import numpy as np
-from lightrag import LightRAG
+from lightrag.kg.neo4j_impl import Neo4JStorage
 from lightrag.llm import openai_complete_if_cache, openai_embedding
 from lightrag.utils import EmbeddingFunc
-from lightrag.kg.neo4j_impl import Neo4JStorage
-
 from loguru import logger
 
+from lightrag import LightRAG
 from marker.config_read import Config
 from marker.database.pdf_data_operator import PDFDataOperator
 from marker.logger import set_logru
@@ -43,6 +42,15 @@ async def llm_model_func(
 
     if history_messages is None:
         history_messages = []
+
+    if system_prompt is not None:
+        logger.trace(f" * * * 发送LLM请求 Prompt长度 {len(prompt)} SystemPrompt长度 {len(system_prompt)} * * * ")
+        logger.trace(f" # # # # #\n{prompt}")
+        logger.trace(f" # # # # #\n{system_prompt}")
+    else:
+        logger.trace(f" * * * 发送LLM请求 Prompt长度 {len(prompt)}\n {prompt} * * * ")
+        logger.trace(f" # # # # #\n{prompt}")
+
     return await openai_complete_if_cache(
         model_name,
         prompt,
@@ -239,7 +247,7 @@ async def get_data_from_db(pdf_data_opt, batch_number) -> Tuple[int, list, dict]
                 files.append(markdown_file)
                 markdown_file_name = os.path.basename(markdown_file)
                 metadata_list[markdown_file_name] = {"out_path": out_folder,
-                                                "record_id": record_id, "title": word_title}
+                                                     "record_id": record_id, "title": word_title}
             else:
                 logger.warning(f"文件不存在：{markdown_file}")
         else:
@@ -348,8 +356,8 @@ async def main():
                     return
 
                 total_file_num, success_file_num, result_msg = await convert_handler(pdf_data_opt, data_source,
-                                                                max_files_arg,
-                                                                metadata_list, files)
+                                                                                     max_files_arg,
+                                                                                     metadata_list, files)
                 if success_file_num == 0:
                     return
                 elif success_file_num > 0:
@@ -363,8 +371,8 @@ async def main():
                 return
 
             total_file_num, success_file_num, result_msg = await convert_handler(None, data_source, max_files_arg,
-                                                            metadata_list,
-                                                            files)
+                                                                                 metadata_list,
+                                                                                 files)
             if success_file_num == 0:
                 return
         else:

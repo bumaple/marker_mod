@@ -30,9 +30,12 @@ async def llm_model_func(
         history_messages = []
 
     if system_prompt is not None:
-        logger.info(f" * * * 发送LLM请求 Prompt长度 {len(prompt)} SystemPrompt长度 {len(system_prompt)}\n {prompt}\n {system_prompt}")
+        logger.trace(f" * * * 发送LLM请求 Prompt长度 {len(prompt)} SystemPrompt长度 {len(system_prompt)} * * * ")
+        logger.trace(f" # # # # #\n{prompt}")
+        logger.trace(f" # # # # #\n{system_prompt}")
     else:
-        logger.info(f" * * * 发送LLM请求 Prompt长度 {len(prompt)}\n {prompt}")
+        logger.trace(f" * * * 发送LLM请求 Prompt长度 {len(prompt)}\n {prompt} * * * ")
+        logger.trace(f" # # # # #\n{prompt}")
 
     return await openai_complete_if_cache(
         model_name,

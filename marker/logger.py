@@ -1,9 +1,9 @@
 import logging
+import os
 import sys
 import warnings
-
-import os
 from logging.handlers import TimedRotatingFileHandler
+
 from loguru import logger
 
 
@@ -41,6 +41,7 @@ def setup_logger(log_name="PDFConvert", log_directory="logs", log_filename="run.
 
     return my_logger
 
+
 def set_logru(log_directory="logs", log_level='INFO'):
     """
         TRACE：用于追踪代码中的详细信息。
@@ -62,10 +63,19 @@ def set_logru(log_directory="logs", log_level='INFO'):
     logger.remove()  # 移除默认的handler，如果有的话
     logger.add(sys.stdout, level=log_level, enqueue=True, colorize=True, backtrace=True, diagnose=True)
 
-    logger.add(sink=os.path.join(log_directory, "run.log"), level=log_level, rotation="1 days",retention="30 days", encoding="utf-8", enqueue=True, colorize=False, backtrace=True, diagnose=True,)
+    logger.add(sink=os.path.join(log_directory, "run.log"), level=log_level, rotation="1 days", retention="30 days",
+               encoding="utf-8", enqueue=True, colorize=False, backtrace=True, diagnose=True, )
 
     # 设置不同级别的日志输出文件
     # logger.add("debug.log", level="DEBUG", rotation="10 MB", filter=lambda record: record["level"].name == "DEBUG")
     # logger.add("info.log", level="INFO", rotation="10 MB", filter=lambda record: record["level"].name == "INFO")
     # logger.add("warning.log", level="WARNING", rotation="10 MB", filter=lambda record: record["level"].name == "WARNING")
-    logger.add(sink=os.path.join(log_directory, "error.log"), level="ERROR", rotation="10 MB", encoding="utf-8", enqueue=True, colorize=False, backtrace=True, diagnose=True, filter=lambda record: record["level"].name == "ERROR")
+    logger.add(sink=os.path.join(log_directory, "error.log"), level="ERROR", rotation="1 days", retention="30 days",
+               encoding="utf-8",
+               enqueue=True, colorize=False, backtrace=True, diagnose=True,
+               filter=lambda record: record["level"].name == "ERROR")
+
+    logger.add(sink=os.path.join(log_directory, "trace.log"), level="TRACE", rotation="1 days", retention="30 days",
+               encoding="utf-8",
+               enqueue=True, colorize=False, backtrace=True, diagnose=True,
+               filter=lambda record: record["level"].name == "TRACE")
